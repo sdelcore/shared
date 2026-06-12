@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hello — shared guestbook</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    max-width: 40rem;
+    margin: 3rem auto;
+    padding: 0 1rem;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.4rem; }
+  #greeting { color: #888; margin-top: -0.5rem; }
+  form { display: flex; gap: 0.5rem; margin: 1.5rem 0; flex-wrap: wrap; }
+  input {
+    flex: 1;
+    min-width: 8rem;
+    padding: 0.5rem 0.7rem;
+    border: 1px solid #8884;
+    border-radius: 6px;
+    font: inherit;
+    background: transparent;
+  }
+  input[name="message"] { flex: 3; }
+  button {
+    padding: 0.5rem 1rem;
+    border: 1px solid #8884;
+    border-radius: 6px;
+    background: #8881;
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover { background: #8883; }
+  ul { list-style: none; padding: 0; }
+  li {
+    padding: 0.6rem 0;
+    border-bottom: 1px solid #8883;
+  }
+  li b { margin-right: 0.4rem; }
+  li time { float: right; color: #888; font-size: 0.8rem; }
+  #empty { color: #888; font-style: italic; }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid #8883;
+    font-size: 0.9rem;
+    color: #888;
+  }
+  #ai-reply { margin-top: 0.5rem; font-style: italic; }
+  #ai-reply.error { color: #c44; }
+</style>
+</head>
+<body>
+<h1>Guestbook</h1>
+<p id="greeting">Loading…</p>
+
+<form id="entry-form">
+  <input name="name" placeholder="Name" required>
+  <input name="message" placeholder="Leave a message" required>
+  <button type="submit">Sign</button>
+</form>
+
+<ul id="entries"></ul>
+<p id="empty" hidden>No entries yet — be the first.</p>
+
+<footer>
+  Powered by <a href="/shared.js">shared.js</a>. Open this page in a second tab
+  and watch entries appear live.
+  <p>
+    <button id="ask-ai" type="button">ask shared.ai</button>
+    <span id="ai-reply"></span>
+  </p>
+</footer>
+
+<script src="/shared.js"></script>
+<script>
+const guestbook = shared.db.collection('guestbook');
+const list = document.getElementById('entries');
+const empty = document.getElementById('empty');
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = String(s ?? '');
+  return d.innerHTML;
+}
+
+function render(docs) {
+  list.innerHTML = docs.map(d => `
+    <li>
+      <time>${esc(new Date(d.at || d.createdAt).toLocaleString())}</time>
+      <b>${esc(d.name)}</b> ${esc(d.message)}
+    </li>`).join('');
+  empty.hidden = docs.length > 0;
+}
+
+async function refresh() {
+  render(await guestbook.list());
+}
+
+async function main() {
+  try {
+    const me = await shared.identity();
+    document.getElementById('greeting').textContent =
+      `Hi ${me.name || me.email} — sign the book below.`;
+    document.querySelector('input[name="name"]').value = me.name || '';
+  } catch {
+    document.getElementById('greeting').textContent = 'Hi — sign the book below.';
+  }
+
+  await refresh();
+  guestbook.subscribe(() => refresh());
+}
+
+document.getElementById('entry-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const form = e.target;
+  await guestbook.create({
+    name: form.name.value.trim(),
+    message: form.message.value.trim(),
+    at: new Date().toISOString(),
+  });
+  form.message.value = '';
+  refresh();
+});
+
+document.getElementById('ask-ai').addEventListener('click', async () => {
+  const out = document.getElementById('ai-reply');
+  out.className = '';
+  out.textContent = 'thinking…';
+  try {
+    const reply = await shared.ai.chat('Say hi to the guestbook in one sentence');
+    out.textContent = typeof reply === 'string' ? reply : reply.content;
+  } catch (err) {
+    out.className = 'error';
+    out.textContent = `AI unavailable: ${err.message || err}`;
+  }
+});
+
+main();
+</script>
+</body>
+</html>

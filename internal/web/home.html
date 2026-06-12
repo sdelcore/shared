@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shared</title>
+<style>
+  :root {
+    --paper: #f4f1ea;
+    --ink: #1c1a17;
+    --rust: #b34a1f;
+    --rule: #c9c2b4;
+    --faint: #6e6657;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Georgia, 'Times New Roman', serif;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 3.5rem 1.5rem 5rem; }
+
+  header { border-bottom: 3px double var(--ink); padding-bottom: 1.25rem; }
+  header h1 {
+    font-size: clamp(3rem, 9vw, 5.5rem);
+    font-weight: 400;
+    font-style: italic;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+  header h1::after { content: "."; color: var(--rust); font-style: normal; }
+  header p {
+    margin-top: .5rem;
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: .8rem;
+    text-transform: uppercase;
+    letter-spacing: .18em;
+    color: var(--faint);
+  }
+
+  section { margin-top: 3rem; }
+  h2 {
+    font-size: .8rem;
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    text-transform: uppercase;
+    letter-spacing: .22em;
+    color: var(--rust);
+    margin-bottom: 1.25rem;
+  }
+  h2::before { content: "§ "; color: var(--faint); }
+
+  .sites { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+  .site {
+    background: var(--paper);
+    display: block;
+    padding: 1.4rem 1.25rem 1.2rem;
+    text-decoration: none;
+    color: inherit;
+    transition: background .15s ease;
+  }
+  .site:hover { background: #ece7db; }
+  .site .name { font-size: 1.45rem; font-style: italic; }
+  .site .name::after { content: " →"; color: var(--rust); font-style: normal; font-size: 1rem; }
+  .site .meta {
+    margin-top: .4rem;
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: .72rem;
+    color: var(--faint);
+  }
+
+  .empty {
+    border: 1px dashed var(--rule);
+    padding: 2.5rem 1.5rem;
+    text-align: center;
+    font-style: italic;
+    color: var(--faint);
+  }
+  .error { color: var(--rust); font-style: italic; }
+
+  .howto { border-left: 3px solid var(--rust); padding-left: 1.5rem; }
+  .howto p { max-width: 56ch; }
+  pre {
+    margin: 1rem 0;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: .85rem;
+    padding: 1rem 1.25rem;
+    overflow-x: auto;
+  }
+  pre .c { color: #9a9282; }
+  code.inline {
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: .85em;
+    background: #e8e2d4;
+    padding: .1em .35em;
+  }
+  .note { margin-top: 1rem; font-size: .95rem; color: var(--faint); max-width: 60ch; }
+
+  footer {
+    margin-top: 4rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rule);
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: .72rem;
+    color: var(--faint);
+    letter-spacing: .08em;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>shared</h1>
+    <p>many small sites · one small server</p>
+  </header>
+
+  <section>
+    <h2>Sites</h2>
+    <div id="sites"><div class="empty">Consulting the index…</div></div>
+  </section>
+
+  <section>
+    <h2>Getting started</h2>
+    <div class="howto">
+      <p>Put an <code class="inline">index.html</code> in a folder, then ship it:</p>
+      <pre><span class="c"># deploy a directory as a site</span>
+shared deploy ./mysite --name mysite
+
+<span class="c"># it is live immediately at</span>
+<span id="example-url">http://mysite.localhost:8787/</span></pre>
+      <p class="note">
+        Every site can include <code class="inline">&lt;script src="/shared.js"&gt;&lt;/script&gt;</code>
+        to get the <code class="inline">shared</code> API for free: a document database with realtime
+        subscriptions, an AI chat proxy, file uploads, websocket channels, and identity.
+      </p>
+    </div>
+  </section>
+
+  <footer>shared — self-hosted, single binary, no auth, trusted LAN</footer>
+</div>
+
+<script>
+(function () {
+  const host = location.hostname;
+  const port = location.port ? ':' + location.port : '';
+
+  document.getElementById('example-url').textContent =
+    'http://mysite.' + host + port + '/';
+
+  function siteURL(name) {
+    return location.protocol + '//' + name + '.' + host + port + '/';
+  }
+
+  function render(sites) {
+    const root = document.getElementById('sites');
+    if (!sites.length) {
+      root.innerHTML = '<div class="empty">Nothing here yet. Your first deploy is one command away — see below.</div>';
+      return;
+    }
+    const grid = document.createElement('div');
+    grid.className = 'sites';
+    sites.forEach(function (site) {
+      const a = document.createElement('a');
+      a.className = 'site';
+      a.href = siteURL(site.name);
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = site.name;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = site.updatedAt
+        ? 'updated ' + new Date(site.updatedAt).toLocaleString()
+        : '';
+      a.append(name, meta);
+      grid.append(a);
+    });
+    root.replaceChildren(grid);
+  }
+
+  fetch('/api/sites')
+    .then(function (res) {
+      if (!res.ok) throw new Error('sites request failed (' + res.status + ')');
+      return res.json();
+    })
+    .then(function (body) { render(body.sites || []); })
+    .catch(function (err) {
+      document.getElementById('sites').innerHTML =
+        '<div class="empty error">Could not load sites: ' + err.message + '</div>';
+    });
+})();
+</script>
+</body>
+</html>
