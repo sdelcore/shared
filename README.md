@@ -82,7 +82,8 @@ const unsubscribe = posts.subscribe(event => {
 
 ### shared.ai
 
-A proxy to the Anthropic API — your key stays on the server.
+A proxy to an OpenAI-compatible chat API (OpenAI, or a gateway like LiteLLM) —
+your key stays on the server.
 
 ```js
 const reply = await shared.ai.chat('Summarize this in one line: ...');
@@ -95,8 +96,8 @@ const res = await shared.ai.chat({
 });
 ```
 
-Requires `ANTHROPIC_API_KEY` to be set on the server; otherwise calls fail
-with an error message.
+Requires `OPENAI_BASE_URL` and `OPENAI_API_KEY` to be set on the server;
+otherwise calls fail with an error message.
 
 ### shared.uploads
 
@@ -152,8 +153,9 @@ subdomain.
 | `SHARED_ADDR` | `:8787` | Listen address |
 | `SHARED_DATA` | `./data` | Data directory |
 | `SHARED_BASE_HOST` | `localhost` | Base host for subdomain routing |
-| `ANTHROPIC_API_KEY` | — | Enables `/api/ai/chat` |
-| `SHARED_AI_MODEL` | `claude-opus-4-8` | Default AI model |
+| `OPENAI_BASE_URL` | — | OpenAI-compatible base URL (e.g. `http://llm.tools.tap/v1`); enables `/api/ai/chat` |
+| `OPENAI_API_KEY` | — | API key/token for the above (e.g. LiteLLM master key) |
+| `SHARED_AI_MODEL` | `claude-opus-4-8` | Default AI model (e.g. `zen/kimi-k2.6`) |
 | `SHARED_USER` | `$USER` | Name/email for the default identity |
 
 ## Data layout

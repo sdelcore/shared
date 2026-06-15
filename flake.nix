@@ -58,7 +58,7 @@
               type = lib.types.nullOr lib.types.path;
               default = null;
               example = "/run/secrets/shared.env";
-              description = "Optional EnvironmentFile, e.g. for ANTHROPIC_API_KEY.";
+              description = "Optional EnvironmentFile, e.g. for OPENAI_BASE_URL + OPENAI_API_KEY.";
             };
 
             openFirewall = lib.mkOption {
