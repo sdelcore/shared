@@ -14,7 +14,7 @@
           pname = "shared";
           version = "0.1.0";
           src = self;
-          vendorHash = "sha256-5qsPErGzVaKsukFmIWmREAlpX+cawGgNA4N71rZPv1Y=";
+          vendorHash = "sha256-afwv9acPqI5YJJGdKJSiRzcVYFl+cAIwiQFxhbLQ3cI=";
           subPackages = [ "cmd/sharedd" "cmd/shared" ];
           ldflags = [ "-s" "-w" ];
         };
