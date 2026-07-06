@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -49,29 +51,258 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	siteDir := filepath.Join(s.DataDir, "sites", site)
-	oldDir := siteDir + ".old-" + fmt.Sprint(time.Now().UnixNano())
-	replaced := false
-	if err := os.Rename(siteDir, oldDir); err == nil {
-		replaced = true
+	versioned := s.KeepVersions > 0
+
+	asideDir := ""
+	if _, err := os.Stat(siteDir); err == nil {
+		asideDir, err = s.stashDir(site, versioned)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not replace site")
+			return
+		}
+		if err := os.Rename(siteDir, asideDir); err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not replace site")
+			return
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		writeErr(w, http.StatusInternalServerError, "could not replace site")
 		return
 	}
+
 	if err := os.Rename(tmpDir, siteDir); err != nil {
-		if replaced {
-			os.Rename(oldDir, siteDir)
+		if asideDir != "" {
+			if rerr := os.Rename(asideDir, siteDir); rerr != nil {
+				log.Printf("deploy: could not restore %s from %s after failed install: %v", siteDir, asideDir, rerr)
+			}
 		}
 		writeErr(w, http.StatusInternalServerError, "could not install site")
 		return
 	}
-	if replaced {
-		os.RemoveAll(oldDir)
+
+	if asideDir != "" {
+		if versioned {
+			s.pruneVersions(site)
+		} else if err := os.RemoveAll(asideDir); err != nil {
+			log.Printf("deploy: could not remove old site dir %s: %v", asideDir, err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"site": site,
 		"url":  s.siteURL(site),
 	})
+}
+
+func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
+	site := r.URL.Query().Get("site")
+	if site == "" {
+		site = r.Header.Get("X-Shared-Site")
+	}
+	if !validSite(site) {
+		writeErr(w, http.StatusBadRequest, "invalid site name")
+		return
+	}
+	siteDir := filepath.Join(s.DataDir, "sites", site)
+	if info, err := os.Stat(siteDir); err != nil || !info.IsDir() {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	names, err := listVersions(s.versionsDir(site))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not list versions")
+		return
+	}
+	if len(names) == 0 {
+		writeErr(w, http.StatusNotFound, "no versions to roll back to")
+		return
+	}
+	newest := filepath.Join(s.versionsDir(site), names[len(names)-1])
+
+	stash, err := s.newVersionDir(site)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not stash current site")
+		return
+	}
+	if err := os.Rename(siteDir, stash); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not stash current site")
+		return
+	}
+	if err := os.Rename(newest, siteDir); err != nil {
+		if rerr := os.Rename(stash, siteDir); rerr != nil {
+			log.Printf("rollback: could not restore %s from %s: %v", siteDir, stash, rerr)
+		}
+		writeErr(w, http.StatusInternalServerError, "could not restore version")
+		return
+	}
+	s.pruneVersions(site)
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"site": site,
+		"url":  s.siteURL(site),
+	})
+}
+
+func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request) {
+	site := r.URL.Query().Get("site")
+	if !validSite(site) {
+		writeErr(w, http.StatusBadRequest, "invalid site name")
+		return
+	}
+	names, err := listVersions(s.versionsDir(site))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not list versions")
+		return
+	}
+	versions := []map[string]any{}
+	for i := len(names) - 1; i >= 0; i-- {
+		ts, _ := versionKey(names[i])
+		versions = append(versions, map[string]any{"timestamp": ts})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"versions": versions})
+}
+
+func (s *Server) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !validSite(name) {
+		writeErr(w, http.StatusBadRequest, "invalid site name")
+		return
+	}
+	siteDir := filepath.Join(s.DataDir, "sites", name)
+	if info, err := os.Stat(siteDir); err != nil || !info.IsDir() {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	s.store.DropSite(name)
+	for _, p := range []string{
+		siteDir,
+		filepath.Join(s.DataDir, "db", name),
+		filepath.Join(s.DataDir, "uploads", name),
+		s.versionsDir(name),
+	} {
+		if err := os.RemoveAll(p); err != nil {
+			log.Printf("delete: could not remove %s: %v", p, err)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
+}
+
+func (s *Server) versionsDir(site string) string {
+	return filepath.Join(s.DataDir, "versions", site)
+}
+
+func (s *Server) stashDir(site string, versioned bool) (string, error) {
+	if versioned {
+		return s.newVersionDir(site)
+	}
+	for {
+		p := filepath.Join(s.DataDir, "old-"+strconv.FormatInt(time.Now().UnixNano(), 10))
+		if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
+			return p, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+}
+
+func (s *Server) newVersionDir(site string) (string, error) {
+	base := s.versionsDir(site)
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return "", err
+	}
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	p := filepath.Join(base, ts)
+	for i := 1; ; i++ {
+		if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
+			return p, nil
+		} else if err != nil {
+			return "", err
+		}
+		p = filepath.Join(base, ts+"-"+strconv.Itoa(i))
+	}
+}
+
+func (s *Server) pruneVersions(site string) {
+	names, err := listVersions(s.versionsDir(site))
+	if err != nil {
+		log.Printf("deploy: could not list versions for %s: %v", site, err)
+		return
+	}
+	if len(names) <= s.KeepVersions {
+		return
+	}
+	for _, name := range names[:len(names)-s.KeepVersions] {
+		p := filepath.Join(s.versionsDir(site), name)
+		if err := os.RemoveAll(p); err != nil {
+			log.Printf("deploy: could not prune version %s: %v", p, err)
+		}
+	}
+}
+
+func listVersions(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	names := []string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Slice(names, func(i, j int) bool { return versionLess(names[i], names[j]) })
+	return names, nil
+}
+
+func versionKey(name string) (int64, string) {
+	base := name
+	if i := strings.IndexByte(name, '-'); i >= 0 {
+		base = name[:i]
+	}
+	n, _ := strconv.ParseInt(base, 10, 64)
+	return n, name
+}
+
+func versionLess(a, b string) bool {
+	an, _ := versionKey(a)
+	bn, _ := versionKey(b)
+	if an != bn {
+		return an < bn
+	}
+	return a < b
+}
+
+func (s *Server) sweep() {
+	sitesDir := filepath.Join(s.DataDir, "sites")
+	if entries, err := os.ReadDir(sitesDir); err == nil {
+		for _, e := range entries {
+			if !strings.Contains(e.Name(), ".old-") {
+				continue
+			}
+			p := filepath.Join(sitesDir, e.Name())
+			if err := os.RemoveAll(p); err != nil {
+				log.Printf("sweep: could not remove %s: %v", p, err)
+			} else {
+				log.Printf("sweep: removed orphaned swap dir %s", p)
+			}
+		}
+	}
+	if entries, err := os.ReadDir(s.DataDir); err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if !strings.HasPrefix(name, "deploy-") && !strings.HasPrefix(name, "old-") {
+				continue
+			}
+			p := filepath.Join(s.DataDir, name)
+			if err := os.RemoveAll(p); err != nil {
+				log.Printf("sweep: could not remove %s: %v", p, err)
+			} else {
+				log.Printf("sweep: removed stale temp dir %s", p)
+			}
+		}
+	}
 }
 
 func extractTarball(r io.Reader, root string) error {

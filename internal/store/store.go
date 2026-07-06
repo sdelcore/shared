@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -176,6 +177,23 @@ func (s *Store) Subscribe(site, col string) (<-chan Event, func()) {
 		}
 	}
 	return ch, cancel
+}
+
+func (s *Store) DropSite(site string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.data, site)
+	prefix := site + "/"
+	for key, m := range s.subs {
+		if key != site && !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		for id, ch := range m {
+			delete(m, id)
+			close(ch)
+		}
+		delete(s.subs, key)
+	}
 }
 
 func (s *Store) notify(site, col string, ev Event) {

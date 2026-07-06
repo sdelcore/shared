@@ -131,7 +131,10 @@ derived from `SHARED_USER` (or `$USER`).
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/api/deploy?site=N` | Body: gzipped tarball of site dir → `{"site","url"}` |
+| `POST` | `/api/rollback?site=N` | Restore the newest saved version → `{"site","url"}` |
+| `GET` | `/api/versions?site=N` | `{"versions":[{"timestamp"}]}`, newest first |
 | `GET` | `/api/sites` | `{"sites":[{"name","updatedAt"}]}` |
+| `DELETE` | `/api/sites/{name}` | Remove a site and all its data → `{"deleted":true}` |
 | `GET` | `/api/db/{col}` | `{"docs":[...]}` |
 | `POST` | `/api/db/{col}` | JSON body → created doc (201) |
 | `GET` | `/api/db/{col}/{id}` | Doc, or 404 `{"error":...}` |
@@ -153,6 +156,7 @@ subdomain.
 | `SHARED_ADDR` | `:8787` | Listen address |
 | `SHARED_DATA` | `./data` | Data directory |
 | `SHARED_BASE_HOST` | `localhost` | Base host for subdomain routing |
+| `SHARED_KEEP_VERSIONS` | `3` | Prior deploys to keep per site for rollback; `0` disables versioning |
 | `OPENAI_BASE_URL` | — | OpenAI-compatible base URL (e.g. `http://llm.tools.tap/v1`); enables `/api/ai/chat` |
 | `OPENAI_API_KEY` | — | API key/token for the above (e.g. LiteLLM master key) |
 | `SHARED_AI_MODEL` | `claude-opus-4-8` | Default AI model (e.g. `zen/kimi-k2.6`) |
@@ -162,10 +166,27 @@ subdomain.
 
 ```
 data/
-  sites/<name>/        deployed static files, one dir per site
-  db/<site>/<col>.json document store, one JSON file per collection
-  uploads/<site>/      uploaded files
-  identity.json        optional identity override: {"email","name"}
+  sites/<name>/            deployed static files, one dir per site
+  versions/<site>/<ts>/    prior deploys kept for rollback, named by unix time
+  db/<site>/<col>.json     document store, one JSON file per collection
+  uploads/<site>/          uploaded files
+  identity.json            optional identity override: {"email","name"}
 ```
 
 Everything is plain files — back it up with whatever you already use.
+
+## Deletion and rollback
+
+Each replacement deploy moves the previous site into
+`versions/<site>/<unix-timestamp>/` and prunes to the newest
+`SHARED_KEEP_VERSIONS` (default 3; set `0` to just discard the old copy).
+
+```sh
+shared versions mysite    # list saved versions, newest first
+shared rollback mysite     # swap in the newest version; the current one is
+                           # kept as a new version, so rollback is reversible
+shared rm mysite           # delete the site, its db, uploads, and versions
+```
+
+`shared rm` (or `DELETE /api/sites/<name>`) removes everything for a site and
+evicts its in-memory collection state, closing any open subscriptions.
