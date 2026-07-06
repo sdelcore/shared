@@ -45,6 +45,7 @@ func New(addr, dataDir, baseHost string, keepVersions int) (*Server, error) {
 	s.api.HandleFunc("GET /api/versions", s.handleVersions)
 	s.api.HandleFunc("GET /api/sites", s.handleSites)
 	s.api.HandleFunc("DELETE /api/sites/{name}", s.handleDeleteSite)
+	s.api.HandleFunc("GET /api/export", s.handleExport)
 	s.api.HandleFunc("GET /api/db/{collection}", s.handleDBList)
 	s.api.HandleFunc("POST /api/db/{collection}", s.handleDBCreate)
 	s.api.HandleFunc("GET /api/db/{collection}/subscribe", s.handleDBSubscribe)

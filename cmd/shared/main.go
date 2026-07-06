@@ -28,6 +28,7 @@ commands:
   rm NAME [--server URL]                      delete a site and its data
   rollback NAME [--server URL]                roll back to the previous version
   versions NAME [--server URL]                list a site's saved versions
+  backup [file] [--server URL]                download a tarball of all server data
 `
 
 func main() {
@@ -48,6 +49,8 @@ func main() {
 		cmdRollback(os.Args[2:])
 	case "versions":
 		cmdVersions(os.Args[2:])
+	case "backup":
+		cmdBackup(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -370,6 +373,45 @@ func cmdVersions(args []string) {
 	for _, v := range out.Versions {
 		fmt.Printf("%d\t%s\n", v.Timestamp, time.Unix(v.Timestamp, 0).Format(time.RFC3339))
 	}
+}
+
+func cmdBackup(args []string) {
+	fs := flag.NewFlagSet("backup", flag.ExitOnError)
+	server := fs.String("server", defaultServer(), "shared server URL")
+	fs.Parse(args)
+
+	dest := ""
+	if fs.NArg() > 0 {
+		dest = fs.Arg(0)
+		fs.Parse(fs.Args()[1:])
+	}
+	if dest == "" {
+		dest = "shared-backup-" + time.Now().Format("20060102-150405") + ".tar.gz"
+	}
+
+	resp, err := http.Get(strings.TrimRight(*server, "/") + "/api/export")
+	if err != nil {
+		fatal("%v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(resp.Body)
+		fatal("backup failed: %s", serverError(body, resp.Status))
+	}
+
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		fatal("%v", err)
+	}
+	n, err := io.Copy(f, resp.Body)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		fatal("writing %s: %v", dest, err)
+	}
+	fmt.Printf("%s\t%s\n", dest, humanSize(n))
 }
 
 func humanSize(n int64) string {

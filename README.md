@@ -50,7 +50,11 @@ shared open NAME                  # print and open a site URL
 shared versions NAME              # a site's saved versions, newest first
 shared rollback NAME              # roll back to the newest saved version
 shared rm NAME                    # delete a site and all its data
+shared backup [file]              # download a gzipped tarball of all server data
 ```
+
+`shared backup` defaults to `shared-backup-<yyyymmdd-hhmmss>.tar.gz` in the
+current directory.
 
 ## Subdomain routing
 
@@ -150,6 +154,7 @@ derived from `SHARED_USER` (or `$USER`).
 | `GET` | `/api/versions?site=N` | `{"versions":[{"timestamp"}]}`, newest first |
 | `GET` | `/api/sites` | `{"sites":[{"name","updatedAt","bytes"}]}` (`bytes` = total on-disk size) |
 | `DELETE` | `/api/sites/{name}` | Remove a site and all its data → `{"deleted":true}` |
+| `GET` | `/api/export` | Streams a gzipped tarball of the entire data directory |
 | `GET` | `/api/db/{col}` | `{"docs":[...]}` |
 | `POST` | `/api/db/{col}` | JSON body → created doc (201) |
 | `GET` | `/api/db/{col}/{id}` | Doc, or 404 `{"error":...}` |
