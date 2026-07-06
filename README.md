@@ -193,6 +193,7 @@ subdomain.
 | `OPENAI_BASE_URL` | — | OpenAI-compatible base URL (e.g. `http://llm.tools.tap/v1`); enables `/api/ai/chat` |
 | `OPENAI_API_KEY` | — | API key/token for the above (e.g. LiteLLM master key) |
 | `SHARED_AI_MODEL` | `claude-opus-4-8` | Default AI model (e.g. `zen/kimi-k2.6`) |
+| `SHARED_AI_RATE` | `30` | Per-site AI requests/min (burst 10); `0` disables the limiter |
 | `SHARED_USER` | `$USER` | Name/email for the default identity |
 
 ## Data layout
