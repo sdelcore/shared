@@ -19,6 +19,12 @@ type aiChatRequest struct {
 	System    string `json:"system"`
 	Model     string `json:"model"`
 	MaxTokens int64  `json:"max_tokens"`
+	Stream    bool   `json:"stream"`
+}
+
+type oaMsg struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 // handleAIChat proxies to an OpenAI-compatible chat-completions endpoint
@@ -43,10 +49,6 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type oaMsg struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
 	msgs := make([]oaMsg, 0, len(req.Messages)+1)
 	if req.System != "" {
 		msgs = append(msgs, oaMsg{Role: "system", Content: req.System})
@@ -69,6 +71,11 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 	maxTokens := req.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 16000
+	}
+
+	if req.Stream {
+		s.streamAIChat(w, r, baseURL, apiKey, model, maxTokens, msgs)
+		return
 	}
 
 	body, _ := json.Marshal(map[string]any{
@@ -135,4 +142,63 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		"model":       oaResp.Model,
 		"stop_reason": stop,
 	})
+}
+
+// streamAIChat proxies a streaming chat completion, piping the upstream
+// OpenAI-compatible SSE straight through to the client. Because data flows
+// incrementally there is no per-token deadline; a generous overall cap guards
+// against a stuck upstream.
+func (s *Server) streamAIChat(w http.ResponseWriter, r *http.Request, baseURL, apiKey, model string, maxTokens int64, msgs []oaMsg) {
+	body, _ := json.Marshal(map[string]any{
+		"model":      model,
+		"max_tokens": maxTokens,
+		"messages":   msgs,
+		"stream":     true,
+	})
+
+	ctx, cancel := context.WithTimeout(r.Context(), 600*time.Second)
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("Accept", "text/event-stream")
+
+	httpResp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer httpResp.Body.Close()
+	if httpResp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(httpResp.Body, 1<<20))
+		writeErr(w, http.StatusBadGateway, "upstream "+httpResp.Status+": "+string(respBody))
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+
+	buf := make([]byte, 4096)
+	for {
+		n, rerr := httpResp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if rerr != nil {
+			return
+		}
+	}
 }

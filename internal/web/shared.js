@@ -153,6 +153,52 @@
     },
   };
 
+  async function streamChat(body, onToken) {
+    const res = await fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      let msg = res.status + ' ' + res.statusText;
+      try {
+        const b = await res.json();
+        if (b && b.error) msg = b.error;
+      } catch (_) {}
+      throw new Error(msg);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let content = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '' || data === '[DONE]') continue;
+        let event;
+        try {
+          event = JSON.parse(data);
+        } catch (_) {
+          continue;
+        }
+        const choice = event.choices && event.choices[0];
+        const delta = choice && choice.delta && choice.delta.content;
+        if (delta) {
+          content += delta;
+          if (onToken) onToken(delta);
+        }
+      }
+    }
+    return content;
+  }
+
   const ai = {
     async chat(messages, opts) {
       opts = opts || {};
@@ -163,6 +209,10 @@
       if (opts.system) body.system = opts.system;
       if (opts.model) body.model = opts.model;
       if (opts.max_tokens) body.max_tokens = opts.max_tokens;
+      if (opts.stream) {
+        body.stream = true;
+        return streamChat(body, opts.onToken);
+      }
       const res = await json('POST', '/api/ai/chat', body);
       return res.content;
     },

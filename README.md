@@ -115,10 +115,16 @@ your key stays on the server.
 const reply = await shared.ai.chat('Summarize this in one line: ...');
 
 // or full control:
-const res = await shared.ai.chat({
-  messages: [{ role: 'user', content: 'hi' }],
+const res = await shared.ai.chat('hi', {
   system: 'Be terse.',
   max_tokens: 256,
+});
+
+// streaming: pass stream + onToken to receive content deltas as they arrive.
+// Still resolves with the full assembled string.
+const full = await shared.ai.chat('Write a haiku about the sea.', {
+  stream: true,
+  onToken: text => process.stdout.write(text),
 });
 ```
 
@@ -168,7 +174,7 @@ derived from `SHARED_USER` (or `$USER`).
 | `PUT` | `/api/db/{col}/{id}` | JSON body → updated doc |
 | `DELETE` | `/api/db/{col}/{id}` | `{"deleted":true}` |
 | `GET` | `/api/db/{col}/subscribe` | WebSocket; pushes `{"type","doc"}` events |
-| `POST` | `/api/ai/chat` | `{"messages",...}` → `{"content","model","stop_reason"}` |
+| `POST` | `/api/ai/chat` | `{"messages",...}` → `{"content","model","stop_reason"}`; with `"stream":true` streams OpenAI SSE |
 | `POST` | `/api/uploads` | multipart field `file` → `{"url"}` (201) |
 | `GET` | `/api/identity` | `{"email","name"}` |
 | `GET` | `/api/ws?channel=C` | WebSocket broadcast channel |
