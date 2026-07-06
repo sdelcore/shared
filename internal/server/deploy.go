@@ -82,9 +82,13 @@ func extractTarball(r io.Reader, root string) error {
 	defer gz.Close()
 
 	tr := tar.NewReader(gz)
+	files := 0
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
+			if files == 0 {
+				return errors.New("tarball contains no files")
+			}
 			return nil
 		}
 		if err != nil {
@@ -121,6 +125,7 @@ func extractTarball(r io.Reader, root string) error {
 			if err != nil {
 				return err
 			}
+			files++
 		default:
 			return fmt.Errorf("unsupported entry type in tarball: %s", hdr.Name)
 		}
