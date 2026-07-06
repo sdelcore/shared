@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/sdelcore/shared/internal/web"
 )
 
 const usage = `usage: shared <command> [arguments]
@@ -29,6 +31,7 @@ commands:
   rollback NAME [--server URL]                roll back to the previous version
   versions NAME [--server URL]                list a site's saved versions
   backup [file] [--server URL]                download a tarball of all server data
+  init [dir]                                  scaffold a new site directory
 `
 
 func main() {
@@ -51,6 +54,8 @@ func main() {
 		cmdVersions(os.Args[2:])
 	case "backup":
 		cmdBackup(os.Args[2:])
+	case "init":
+		cmdInit(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -412,6 +417,42 @@ func cmdBackup(args []string) {
 		fatal("writing %s: %v", dest, err)
 	}
 	fmt.Printf("%s\t%s\n", dest, humanSize(n))
+}
+
+func cmdInit(args []string) {
+	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	fs.Parse(args)
+
+	dir := "."
+	if fs.NArg() > 0 {
+		dir = fs.Arg(0)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fatal("%v", err)
+	}
+
+	files := []struct {
+		path    string
+		content []byte
+	}{
+		{filepath.Join(dir, "index.html"), web.InitIndexHTML},
+		{filepath.Join(dir, ".claude", "skills", "shared-sites", "SKILL.md"), web.InitSkillMD},
+	}
+	for _, file := range files {
+		if _, err := os.Stat(file.path); err == nil {
+			fmt.Printf("skip %s (exists)\n", file.path)
+			continue
+		} else if !os.IsNotExist(err) {
+			fatal("%v", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(file.path), 0o755); err != nil {
+			fatal("%v", err)
+		}
+		if err := os.WriteFile(file.path, file.content, 0o644); err != nil {
+			fatal("writing %s: %v", file.path, err)
+		}
+		fmt.Printf("wrote %s\n", file.path)
+	}
 }
 
 func humanSize(n int64) string {

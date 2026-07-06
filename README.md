@@ -44,6 +44,7 @@ The `shared` binary talks to the server over HTTP (`--server`, default
 `http://localhost:8787` or `$SHARED_SERVER`).
 
 ```sh
+shared init [dir]                 # scaffold index.html + a shared-sites agent skill
 shared deploy [dir] --name NAME   # pack a directory and deploy it
 shared list                       # deployed sites with size + last-updated time
 shared open NAME                  # print and open a site URL
@@ -53,8 +54,10 @@ shared rm NAME                    # delete a site and all its data
 shared backup [file]              # download a gzipped tarball of all server data
 ```
 
-`shared backup` defaults to `shared-backup-<yyyymmdd-hhmmss>.tar.gz` in the
-current directory.
+`shared init` writes a minimal `index.html` and
+`.claude/skills/shared-sites/SKILL.md` (an agent skill documenting the client
+API), refusing to overwrite existing files. `shared backup` defaults to
+`shared-backup-<yyyymmdd-hhmmss>.tar.gz` in the current directory.
 
 ## Subdomain routing
 
