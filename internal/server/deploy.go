@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -377,7 +378,7 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not list sites")
 		return
 	}
-	sites := []map[string]string{}
+	sites := []map[string]any{}
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -386,11 +387,37 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 		if info, err := e.Info(); err == nil {
 			updatedAt = info.ModTime().UTC().Format(time.RFC3339)
 		}
-		sites = append(sites, map[string]string{
+		sites = append(sites, map[string]any{
 			"name":      e.Name(),
 			"updatedAt": updatedAt,
+			"bytes":     s.siteBytes(e.Name()),
 		})
 	}
-	sort.Slice(sites, func(i, j int) bool { return sites[i]["name"] < sites[j]["name"] })
+	sort.Slice(sites, func(i, j int) bool {
+		return sites[i]["name"].(string) < sites[j]["name"].(string)
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"sites": sites})
+}
+
+func (s *Server) siteBytes(name string) int64 {
+	var total int64
+	for _, dir := range []string{
+		filepath.Join(s.DataDir, "sites", name),
+		filepath.Join(s.DataDir, "db", name),
+		filepath.Join(s.DataDir, "uploads", name),
+		s.versionsDir(name),
+	} {
+		filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.Type().IsRegular() {
+				if info, err := d.Info(); err == nil {
+					total += info.Size()
+				}
+			}
+			return nil
+		})
+	}
+	return total
 }

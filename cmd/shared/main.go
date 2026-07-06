@@ -229,6 +229,7 @@ func cmdList(args []string) {
 		Sites []struct {
 			Name      string `json:"name"`
 			UpdatedAt string `json:"updatedAt"`
+			Bytes     int64  `json:"bytes"`
 		} `json:"sites"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
@@ -239,7 +240,7 @@ func cmdList(args []string) {
 		return
 	}
 	for _, site := range out.Sites {
-		fmt.Printf("%s\t%s\n", site.Name, site.UpdatedAt)
+		fmt.Printf("%s\t%s\t%s\n", site.Name, humanSize(site.Bytes), site.UpdatedAt)
 	}
 }
 
@@ -369,6 +370,19 @@ func cmdVersions(args []string) {
 	for _, v := range out.Versions {
 		fmt.Printf("%d\t%s\n", v.Timestamp, time.Unix(v.Timestamp, 0).Format(time.RFC3339))
 	}
+}
+
+func humanSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
 }
 
 func serverError(body []byte, status string) string {

@@ -172,6 +172,14 @@ shared deploy ./mysite --name mysite
     return location.protocol + '//' + name + '.' + host + port + '/';
   }
 
+  function humanSize(n) {
+    if (typeof n !== 'number' || n < 1024) return (n || 0) + ' B';
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let i = -1;
+    do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
+    return n.toFixed(1) + ' ' + units[i];
+  }
+
   function render(sites) {
     const root = document.getElementById('sites');
     if (!sites.length) {
@@ -191,9 +199,11 @@ shared deploy ./mysite --name mysite
       name.textContent = site.name;
       const meta = document.createElement('div');
       meta.className = 'meta';
-      meta.textContent = site.updatedAt
-        ? 'updated ' + new Date(site.updatedAt).toLocaleString()
-        : '';
+      const parts = [humanSize(site.bytes)];
+      if (site.updatedAt) {
+        parts.push('updated ' + new Date(site.updatedAt).toLocaleString());
+      }
+      meta.textContent = parts.join(' · ');
       a.append(name, meta);
       const del = document.createElement('button');
       del.className = 'del';

@@ -35,7 +35,22 @@ bin/shared deploy examples/hello --name hello
 xdg-open http://hello.localhost:8787
 ```
 
-The homepage at `http://localhost:8787` lists all deployed sites.
+The homepage at `http://localhost:8787` lists all deployed sites, each with its
+on-disk size and last-updated time.
+
+## CLI
+
+The `shared` binary talks to the server over HTTP (`--server`, default
+`http://localhost:8787` or `$SHARED_SERVER`).
+
+```sh
+shared deploy [dir] --name NAME   # pack a directory and deploy it
+shared list                       # deployed sites with size + last-updated time
+shared open NAME                  # print and open a site URL
+shared versions NAME              # a site's saved versions, newest first
+shared rollback NAME              # roll back to the newest saved version
+shared rm NAME                    # delete a site and all its data
+```
 
 ## Subdomain routing
 
@@ -133,7 +148,7 @@ derived from `SHARED_USER` (or `$USER`).
 | `POST` | `/api/deploy?site=N` | Body: gzipped tarball of site dir → `{"site","url"}` |
 | `POST` | `/api/rollback?site=N` | Restore the newest saved version → `{"site","url"}` |
 | `GET` | `/api/versions?site=N` | `{"versions":[{"timestamp"}]}`, newest first |
-| `GET` | `/api/sites` | `{"sites":[{"name","updatedAt"}]}` |
+| `GET` | `/api/sites` | `{"sites":[{"name","updatedAt","bytes"}]}` (`bytes` = total on-disk size) |
 | `DELETE` | `/api/sites/{name}` | Remove a site and all its data → `{"deleted":true}` |
 | `GET` | `/api/db/{col}` | `{"docs":[...]}` |
 | `POST` | `/api/db/{col}` | JSON body → created doc (201) |
