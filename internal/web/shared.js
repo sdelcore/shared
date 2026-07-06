@@ -29,13 +29,27 @@
     return proto + '//' + location.host + path;
   }
 
-  function reconnectingSocket(url, onMessage) {
+  function reconnectingSocket(url, onMessage, onOpen) {
+    const MAX_QUEUE = 100;
     let ws = null;
     let closed = false;
+    let everOpened = false;
+    const queue = [];
+
+    function flush() {
+      while (queue.length && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(queue.shift());
+      }
+    }
 
     function connect() {
       if (closed) return;
       ws = new WebSocket(url);
+      ws.onopen = function () {
+        flush();
+        if (onOpen) onOpen(everOpened);
+        everOpened = true;
+      };
       ws.onmessage = onMessage;
       ws.onclose = function () {
         ws = null;
@@ -46,10 +60,16 @@
 
     return {
       send(data) {
-        if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(data);
+        } else {
+          if (queue.length >= MAX_QUEUE) queue.shift();
+          queue.push(data);
+        }
       },
       close() {
         closed = true;
+        queue.length = 0;
         if (ws) ws.close();
       },
     };
@@ -77,6 +97,37 @@
         },
         subscribe(handlers) {
           handlers = handlers || {};
+          // Track id -> updatedAt so we can detect changes missed while the
+          // socket was disconnected and replay them on reconnect.
+          const snapshot = new Map();
+
+          async function resync(isReconnect) {
+            let docs;
+            try {
+              docs = await request(base);
+            } catch (_) {
+              return;
+            }
+            docs = (docs && docs.docs) || [];
+            const seen = new Set();
+            for (const doc of docs) {
+              seen.add(doc.id);
+              const prev = snapshot.get(doc.id);
+              snapshot.set(doc.id, doc.updatedAt);
+              if (!isReconnect) continue;
+              if (prev === undefined) {
+                if (handlers.onCreate) handlers.onCreate(doc);
+              } else if (prev !== doc.updatedAt) {
+                if (handlers.onUpdate) handlers.onUpdate(doc);
+              }
+            }
+            for (const id of Array.from(snapshot.keys())) {
+              if (seen.has(id)) continue;
+              snapshot.delete(id);
+              if (isReconnect && handlers.onDelete) handlers.onDelete({ id });
+            }
+          }
+
           const sock = reconnectingSocket(wsURL(base + '/subscribe'), function (msg) {
             let event;
             try {
@@ -84,10 +135,18 @@
             } catch (_) {
               return;
             }
-            if (event.type === 'created' && handlers.onCreate) handlers.onCreate(event.doc);
-            else if (event.type === 'updated' && handlers.onUpdate) handlers.onUpdate(event.doc);
-            else if (event.type === 'deleted' && handlers.onDelete) handlers.onDelete(event.doc);
-          });
+            const doc = event.doc || {};
+            if (event.type === 'created') {
+              snapshot.set(doc.id, doc.updatedAt);
+              if (handlers.onCreate) handlers.onCreate(doc);
+            } else if (event.type === 'updated') {
+              snapshot.set(doc.id, doc.updatedAt);
+              if (handlers.onUpdate) handlers.onUpdate(doc);
+            } else if (event.type === 'deleted') {
+              snapshot.delete(doc.id);
+              if (handlers.onDelete) handlers.onDelete(doc);
+            }
+          }, resync);
           return { close: sock.close };
         },
       };
