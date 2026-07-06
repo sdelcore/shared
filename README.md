@@ -75,9 +75,13 @@ await posts.update(doc.id, { title: 'hello' });
 await posts.delete(doc.id);
 
 // realtime: fires on created / updated / deleted
-const unsubscribe = posts.subscribe(event => {
-  console.log(event.type, event.doc);
+const sub = posts.subscribe({
+  onCreate: doc => console.log('created', doc),
+  onUpdate: doc => console.log('updated', doc),
+  onDelete: doc => console.log('deleted', doc),
 });
+// sub.close() to stop. On reconnect after a drop, subscribe re-syncs and
+// replays any create/update/delete missed while disconnected.
 ```
 
 ### shared.ai
