@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/sdelcore/shared/internal/server"
 )
@@ -19,7 +20,16 @@ func main() {
 	dataDir := envOr("SHARED_DATA", "./data")
 	baseHost := envOr("SHARED_BASE_HOST", "localhost")
 
-	srv, err := server.New(addr, dataDir, baseHost)
+	keepVersions := 3
+	if v := os.Getenv("SHARED_KEEP_VERSIONS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			log.Fatalf("invalid SHARED_KEEP_VERSIONS %q", v)
+		}
+		keepVersions = n
+	}
+
+	srv, err := server.New(addr, dataDir, baseHost, keepVersions)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const usage = `usage: shared <command> [arguments]
@@ -24,6 +25,9 @@ commands:
   deploy [dir] [--name NAME] [--server URL]   deploy a site directory
   list [--server URL]                         list deployed sites
   open NAME [--server URL]                    print and open a site URL
+  rm NAME [--server URL]                      delete a site and its data
+  rollback NAME [--server URL]                roll back to the previous version
+  versions NAME [--server URL]                list a site's saved versions
 `
 
 func main() {
@@ -38,6 +42,12 @@ func main() {
 		cmdList(os.Args[2:])
 	case "open":
 		cmdOpen(os.Args[2:])
+	case "rm":
+		cmdRm(os.Args[2:])
+	case "rollback":
+		cmdRollback(os.Args[2:])
+	case "versions":
+		cmdVersions(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -258,6 +268,107 @@ func cmdOpen(args []string) {
 	siteURL := u.Scheme + "://" + host + "/"
 	fmt.Println(siteURL)
 	exec.Command("xdg-open", siteURL).Start()
+}
+
+func cmdRm(args []string) {
+	fs := flag.NewFlagSet("rm", flag.ExitOnError)
+	server := fs.String("server", defaultServer(), "shared server URL")
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "usage: shared rm NAME [--server URL]")
+		os.Exit(2)
+	}
+	name := fs.Arg(0)
+	fs.Parse(fs.Args()[1:])
+
+	endpoint := strings.TrimRight(*server, "/") + "/api/sites/" + url.PathEscape(name)
+	req, err := http.NewRequest(http.MethodDelete, endpoint, nil)
+	if err != nil {
+		fatal("%v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fatal("%v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		fatal("rm failed: %s", serverError(body, resp.Status))
+	}
+	fmt.Printf("deleted %s\n", name)
+}
+
+func cmdRollback(args []string) {
+	fs := flag.NewFlagSet("rollback", flag.ExitOnError)
+	server := fs.String("server", defaultServer(), "shared server URL")
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "usage: shared rollback NAME [--server URL]")
+		os.Exit(2)
+	}
+	name := fs.Arg(0)
+	fs.Parse(fs.Args()[1:])
+
+	endpoint := strings.TrimRight(*server, "/") + "/api/rollback?site=" + url.QueryEscape(name)
+	resp, err := http.Post(endpoint, "", nil)
+	if err != nil {
+		fatal("%v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		fatal("rollback failed: %s", serverError(body, resp.Status))
+	}
+	var out struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil || out.URL == "" {
+		fatal("unexpected response: %s", strings.TrimSpace(string(body)))
+	}
+	fmt.Println(out.URL)
+}
+
+func cmdVersions(args []string) {
+	fs := flag.NewFlagSet("versions", flag.ExitOnError)
+	server := fs.String("server", defaultServer(), "shared server URL")
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "usage: shared versions NAME [--server URL]")
+		os.Exit(2)
+	}
+	name := fs.Arg(0)
+	fs.Parse(fs.Args()[1:])
+
+	resp, err := http.Get(strings.TrimRight(*server, "/") + "/api/versions?site=" + url.QueryEscape(name))
+	if err != nil {
+		fatal("%v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		fatal("versions failed: %s", serverError(body, resp.Status))
+	}
+	var out struct {
+		Versions []struct {
+			Timestamp int64 `json:"timestamp"`
+		} `json:"versions"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		fatal("unexpected response: %s", strings.TrimSpace(string(body)))
+	}
+	if len(out.Versions) == 0 {
+		fmt.Println("(none)")
+		return
+	}
+	for _, v := range out.Versions {
+		fmt.Printf("%d\t%s\n", v.Timestamp, time.Unix(v.Timestamp, 0).Format(time.RFC3339))
+	}
 }
 
 func serverError(body []byte, status string) string {
