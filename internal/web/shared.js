@@ -216,6 +216,17 @@
       const res = await json('POST', '/api/ai/chat', body);
       return res.content;
     },
+    async image(prompt, opts) {
+      if (prompt && typeof prompt === 'object') {
+        opts = prompt;
+        prompt = opts.prompt;
+      }
+      opts = opts || {};
+      const body = { prompt };
+      if (opts.model) body.model = opts.model;
+      if (opts.size) body.size = opts.size;
+      return json('POST', '/api/ai/image', body);
+    },
   };
 
   const uploads = {

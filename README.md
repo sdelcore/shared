@@ -128,8 +128,19 @@ const full = await shared.ai.chat('Write a haiku about the sea.', {
 });
 ```
 
+Image generation returns a persistent upload URL for the current site:
+
+```js
+const { url } = await shared.ai.image('a watercolor fox, minimal');
+img.src = url;   // served from /uploads/<site>/<rand>-ai.png
+
+// or with options:
+const res = await shared.ai.image({ prompt: 'a logo', size: '512x512' });
+```
+
 Requires `OPENAI_BASE_URL` and `OPENAI_API_KEY` to be set on the server;
-otherwise calls fail with an error message.
+image generation also needs `SHARED_AI_IMAGE_MODEL` (or a `model` in the call).
+Otherwise calls fail with an error message.
 
 ### shared.uploads
 
@@ -175,6 +186,7 @@ derived from `SHARED_USER` (or `$USER`).
 | `DELETE` | `/api/db/{col}/{id}` | `{"deleted":true}` |
 | `GET` | `/api/db/{col}/subscribe` | WebSocket; pushes `{"type","doc"}` events |
 | `POST` | `/api/ai/chat` | `{"messages",...}` → `{"content","model","stop_reason"}`; with `"stream":true` streams OpenAI SSE |
+| `POST` | `/api/ai/image` | `{"prompt","model?","size?"}` → `{"url"}` (201, saved to site uploads) |
 | `POST` | `/api/uploads` | multipart field `file` → `{"url"}` (201) |
 | `GET` | `/api/identity` | `{"email","name"}` |
 | `GET` | `/api/ws?channel=C` | WebSocket broadcast channel |
@@ -193,6 +205,7 @@ subdomain.
 | `OPENAI_BASE_URL` | — | OpenAI-compatible base URL (e.g. `http://llm.tools.tap/v1`); enables `/api/ai/chat` |
 | `OPENAI_API_KEY` | — | API key/token for the above (e.g. LiteLLM master key) |
 | `SHARED_AI_MODEL` | `claude-opus-4-8` | Default AI model (e.g. `zen/kimi-k2.6`) |
+| `SHARED_AI_IMAGE_MODEL` | — | Model for `/api/ai/image` (e.g. `gpt-image-1`); required unless passed per request |
 | `SHARED_AI_RATE` | `30` | Per-site AI requests/min (burst 10); `0` disables the limiter |
 | `SHARED_USER` | `$USER` | Name/email for the default identity |
 
