@@ -111,11 +111,16 @@ func cmdDeploy(args []string) {
 }
 
 func buildTarball(root string) (*bytes.Buffer, error) {
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, err
+	}
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
 
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	files := 0
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -127,15 +132,33 @@ func buildTarball(root string) (*bytes.Buffer, error) {
 			return nil
 		}
 		base := d.Name()
-		if d.IsDir() && (base == ".git" || base == "node_modules") {
+		if strings.HasPrefix(base, ".") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() && base == "node_modules" {
 			return filepath.SkipDir
 		}
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() && !info.Mode().IsRegular() {
-			return nil
+		if info.Mode()&fs.ModeSymlink != 0 {
+			target, err := os.Stat(path)
+			if err != nil {
+				return fmt.Errorf("broken symlink %s: %w", rel, err)
+			}
+			if target.IsDir() {
+				return fmt.Errorf("symlink to directory not supported: %s", rel)
+			}
+			if !target.Mode().IsRegular() {
+				return fmt.Errorf("symlink to non-regular file: %s", rel)
+			}
+			info = target
+		} else if !d.IsDir() && !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported file type: %s", rel)
 		}
 		hdr, err := tar.FileInfoHeader(info, "")
 		if err != nil {
@@ -156,8 +179,11 @@ func buildTarball(root string) (*bytes.Buffer, error) {
 			return err
 		}
 		defer f.Close()
-		_, err = io.Copy(tw, f)
-		return err
+		if _, err := io.Copy(tw, f); err != nil {
+			return err
+		}
+		files++
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -167,6 +193,9 @@ func buildTarball(root string) (*bytes.Buffer, error) {
 	}
 	if err := gw.Close(); err != nil {
 		return nil, err
+	}
+	if files == 0 {
+		return nil, fmt.Errorf("no files to deploy in %s", root)
 	}
 	return &buf, nil
 }
