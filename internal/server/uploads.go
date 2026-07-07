@@ -50,32 +50,37 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	var buf [4]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not generate name")
-		return
-	}
-	stored := hex.EncodeToString(buf[:]) + "-" + sanitizeFilename(header.Filename)
-
-	dir := filepath.Join(s.DataDir, "uploads", site)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not create upload dir")
-		return
-	}
-	dst, err := os.Create(filepath.Join(dir, stored))
+	url, err := s.saveUpload(site, header.Filename, file)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not save file")
 		return
 	}
-	defer dst.Close()
-	if _, err := io.Copy(dst, file); err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not save file")
-		return
-	}
 
-	writeJSON(w, http.StatusCreated, map[string]string{
-		"url": "/uploads/" + site + "/" + stored,
-	})
+	writeJSON(w, http.StatusCreated, map[string]string{"url": url})
+}
+
+// saveUpload stores src under the site's uploads dir with a random-prefixed
+// name and returns the public /uploads/<site>/<file> URL.
+func (s *Server) saveUpload(site, name string, src io.Reader) (string, error) {
+	var buf [4]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	stored := hex.EncodeToString(buf[:]) + "-" + sanitizeFilename(name)
+
+	dir := filepath.Join(s.DataDir, "uploads", site)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	dst, err := os.Create(filepath.Join(dir, stored))
+	if err != nil {
+		return "", err
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, src); err != nil {
+		return "", err
+	}
+	return "/uploads/" + site + "/" + stored, nil
 }
 
 func (s *Server) handleServeUpload(w http.ResponseWriter, r *http.Request) {

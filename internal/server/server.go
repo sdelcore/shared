@@ -17,6 +17,7 @@ type Server struct {
 	store *store.Store
 	hub   *Hub
 	api   *http.ServeMux
+	ai    *limiter
 }
 
 func New(addr, dataDir, baseHost string, keepVersions int) (*Server, error) {
@@ -37,6 +38,7 @@ func New(addr, dataDir, baseHost string, keepVersions int) (*Server, error) {
 		store:        st,
 		hub:          NewHub(),
 		api:          http.NewServeMux(),
+		ai:           newAILimiter(),
 	}
 	s.sweep()
 
@@ -52,7 +54,8 @@ func New(addr, dataDir, baseHost string, keepVersions int) (*Server, error) {
 	s.api.HandleFunc("GET /api/db/{collection}/{id}", s.handleDBGet)
 	s.api.HandleFunc("PUT /api/db/{collection}/{id}", s.handleDBUpdate)
 	s.api.HandleFunc("DELETE /api/db/{collection}/{id}", s.handleDBDelete)
-	s.api.HandleFunc("POST /api/ai/chat", s.handleAIChat)
+	s.api.HandleFunc("POST /api/ai/chat", s.aiRateLimit(s.handleAIChat))
+	s.api.HandleFunc("POST /api/ai/image", s.aiRateLimit(s.handleAIImage))
 	s.api.HandleFunc("POST /api/uploads", s.handleUpload)
 	s.api.HandleFunc("GET /api/identity", s.handleIdentity)
 	s.api.HandleFunc("GET /api/ws", s.handleWS)
