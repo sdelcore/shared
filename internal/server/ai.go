@@ -77,7 +77,17 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		"messages":   msgs,
 	})
 
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	// Non-streaming, so the deadline must cover the whole generation. Scale
+	// with max_tokens at a conservative 25 tok/s (plus 60s of overhead),
+	// clamped to a sane [120s, 600s] window.
+	timeout := time.Duration(60+maxTokens/25) * time.Second
+	if timeout < 120*time.Second {
+		timeout = 120 * time.Second
+	}
+	if timeout > 600*time.Second {
+		timeout = 600 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))

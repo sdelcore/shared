@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -10,6 +11,21 @@ import (
 )
 
 const wsWriteTimeout = 5 * time.Second
+
+// wsOriginPatterns returns the Origin host patterns authorized to open a
+// WebSocket. The coder/websocket library always authorizes same-origin
+// requests (Origin host == request Host) and matches these patterns against
+// the Origin URL's host including port, so we allow the request's own host
+// plus the platform's base host and its subdomains, with and without the
+// listen port. This blocks foreign origins (e.g. another LAN service) while
+// letting the platform's own sites connect.
+func (s *Server) wsOriginPatterns(r *http.Request) []string {
+	patterns := []string{r.Host, s.BaseHost, "*." + s.BaseHost}
+	if _, port, err := net.SplitHostPort(s.Addr); err == nil && port != "" {
+		patterns = append(patterns, s.BaseHost+":"+port, "*."+s.BaseHost+":"+port)
+	}
+	return patterns
+}
 
 type hubConn struct {
 	conn *websocket.Conn
@@ -88,7 +104,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: []string{"*"},
+		OriginPatterns: s.wsOriginPatterns(r),
 	})
 	if err != nil {
 		return
