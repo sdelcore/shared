@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/sdelcore/shared/internal/web"
 )
 
 const usage = `usage: shared <command> [arguments]
@@ -28,6 +30,8 @@ commands:
   rm NAME [--server URL]                      delete a site and its data
   rollback NAME [--server URL]                roll back to the previous version
   versions NAME [--server URL]                list a site's saved versions
+  backup [file] [--server URL]                download a tarball of all server data
+  init [dir]                                  scaffold a new site directory
 `
 
 func main() {
@@ -48,6 +52,10 @@ func main() {
 		cmdRollback(os.Args[2:])
 	case "versions":
 		cmdVersions(os.Args[2:])
+	case "backup":
+		cmdBackup(os.Args[2:])
+	case "init":
+		cmdInit(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -229,6 +237,7 @@ func cmdList(args []string) {
 		Sites []struct {
 			Name      string `json:"name"`
 			UpdatedAt string `json:"updatedAt"`
+			Bytes     int64  `json:"bytes"`
 		} `json:"sites"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
@@ -239,7 +248,7 @@ func cmdList(args []string) {
 		return
 	}
 	for _, site := range out.Sites {
-		fmt.Printf("%s\t%s\n", site.Name, site.UpdatedAt)
+		fmt.Printf("%s\t%s\t%s\n", site.Name, humanSize(site.Bytes), site.UpdatedAt)
 	}
 }
 
@@ -369,6 +378,94 @@ func cmdVersions(args []string) {
 	for _, v := range out.Versions {
 		fmt.Printf("%d\t%s\n", v.Timestamp, time.Unix(v.Timestamp, 0).Format(time.RFC3339))
 	}
+}
+
+func cmdBackup(args []string) {
+	fs := flag.NewFlagSet("backup", flag.ExitOnError)
+	server := fs.String("server", defaultServer(), "shared server URL")
+	fs.Parse(args)
+
+	dest := ""
+	if fs.NArg() > 0 {
+		dest = fs.Arg(0)
+		fs.Parse(fs.Args()[1:])
+	}
+	if dest == "" {
+		dest = "shared-backup-" + time.Now().Format("20060102-150405") + ".tar.gz"
+	}
+
+	resp, err := http.Get(strings.TrimRight(*server, "/") + "/api/export")
+	if err != nil {
+		fatal("%v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(resp.Body)
+		fatal("backup failed: %s", serverError(body, resp.Status))
+	}
+
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		fatal("%v", err)
+	}
+	n, err := io.Copy(f, resp.Body)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		fatal("writing %s: %v", dest, err)
+	}
+	fmt.Printf("%s\t%s\n", dest, humanSize(n))
+}
+
+func cmdInit(args []string) {
+	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	fs.Parse(args)
+
+	dir := "."
+	if fs.NArg() > 0 {
+		dir = fs.Arg(0)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fatal("%v", err)
+	}
+
+	files := []struct {
+		path    string
+		content []byte
+	}{
+		{filepath.Join(dir, "index.html"), web.InitIndexHTML},
+		{filepath.Join(dir, ".claude", "skills", "shared-sites", "SKILL.md"), web.InitSkillMD},
+	}
+	for _, file := range files {
+		if _, err := os.Stat(file.path); err == nil {
+			fmt.Printf("skip %s (exists)\n", file.path)
+			continue
+		} else if !os.IsNotExist(err) {
+			fatal("%v", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(file.path), 0o755); err != nil {
+			fatal("%v", err)
+		}
+		if err := os.WriteFile(file.path, file.content, 0o644); err != nil {
+			fatal("writing %s: %v", file.path, err)
+		}
+		fmt.Printf("wrote %s\n", file.path)
+	}
+}
+
+func humanSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
 }
 
 func serverError(body []byte, status string) string {
