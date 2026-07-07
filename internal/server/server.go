@@ -12,14 +12,15 @@ import (
 
 type Server struct {
 	Addr, DataDir, BaseHost string
+	KeepVersions            int
 
 	store *store.Store
 	hub   *Hub
 	api   *http.ServeMux
 }
 
-func New(addr, dataDir, baseHost string) (*Server, error) {
-	for _, dir := range []string{filepath.Join(dataDir, "sites"), filepath.Join(dataDir, "uploads")} {
+func New(addr, dataDir, baseHost string, keepVersions int) (*Server, error) {
+	for _, dir := range []string{filepath.Join(dataDir, "sites"), filepath.Join(dataDir, "uploads"), filepath.Join(dataDir, "versions")} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, err
 		}
@@ -29,16 +30,21 @@ func New(addr, dataDir, baseHost string) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		Addr:     addr,
-		DataDir:  dataDir,
-		BaseHost: baseHost,
-		store:    st,
-		hub:      NewHub(),
-		api:      http.NewServeMux(),
+		Addr:         addr,
+		DataDir:      dataDir,
+		BaseHost:     baseHost,
+		KeepVersions: keepVersions,
+		store:        st,
+		hub:          NewHub(),
+		api:          http.NewServeMux(),
 	}
+	s.sweep()
 
 	s.api.HandleFunc("POST /api/deploy", s.handleDeploy)
+	s.api.HandleFunc("POST /api/rollback", s.handleRollback)
+	s.api.HandleFunc("GET /api/versions", s.handleVersions)
 	s.api.HandleFunc("GET /api/sites", s.handleSites)
+	s.api.HandleFunc("DELETE /api/sites/{name}", s.handleDeleteSite)
 	s.api.HandleFunc("GET /api/db/{collection}", s.handleDBList)
 	s.api.HandleFunc("POST /api/db/{collection}", s.handleDBCreate)
 	s.api.HandleFunc("GET /api/db/{collection}/subscribe", s.handleDBSubscribe)
