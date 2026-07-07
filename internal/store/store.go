@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -204,7 +205,12 @@ func (s *Store) ensure(site, col string) (map[string]Doc, error) {
 	case err == nil:
 		var docs []Doc
 		if err := json.Unmarshal(b, &docs); err != nil {
-			return nil, err
+			corrupt := s.path(site, col) + ".corrupt"
+			log.Printf("store: collection %s/%s is corrupt (%v); moving aside to %s and starting empty", site, col, err, corrupt)
+			if rerr := os.Rename(s.path(site, col), corrupt); rerr != nil {
+				log.Printf("store: could not move corrupt collection %s/%s aside: %v", site, col, rerr)
+			}
+			break
 		}
 		for _, d := range docs {
 			if id, _ := d["id"].(string); id != "" {
@@ -237,6 +243,11 @@ func (s *Store) persist(site, col string, cm map[string]Doc) error {
 		return err
 	}
 	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		os.Remove(tmp.Name())
 		return err
