@@ -36,7 +36,87 @@ xdg-open http://hello.localhost:8787
 ```
 
 The homepage at `http://localhost:8787` lists all deployed sites, each with its
-on-disk size and last-updated time.
+on-disk size and last-updated time. Each site card also has a `×` button that
+deletes the site and all its data (same as `shared rm`).
+
+## Install
+
+### Nix
+
+The flake packages both binaries (`sharedd` and `shared`):
+
+```sh
+nix profile install github:sdelcore/shared
+```
+
+On NixOS, use the bundled module instead — it runs `sharedd` as a hardened
+systemd service with state in `/var/lib/shared`:
+
+```nix
+{
+  inputs.shared.url = "github:sdelcore/shared";
+}
+```
+
+```nix
+{ inputs, ... }:
+{
+  imports = [ inputs.shared.nixosModules.default ];
+
+  services.shared = {
+    enable = true;
+    baseHost = "shared.tap";     # sites at <name>.shared.tap
+    openFirewall = true;
+    # environmentFile = "/run/secrets/shared.env";  # OPENAI_BASE_URL, OPENAI_API_KEY
+  };
+}
+```
+
+### Ubuntu / other Linux
+
+Download a static binary tarball from the
+[releases page](https://github.com/sdelcore/shared/releases) and install it:
+
+```sh
+tar -xzf shared_*_linux_amd64.tar.gz
+sudo install -m 0755 sharedd shared /usr/local/bin/
+```
+
+Or build from source. This needs Go 1.24+, which is newer than what Ubuntu
+24.04's apt ships — install it from [go.dev/dl](https://go.dev/dl/):
+
+```sh
+CGO_ENABLED=0 go install github.com/sdelcore/shared/cmd/...@latest
+```
+
+The binaries are pure Go and fully static; nothing else is required. To run
+the server under systemd, drop this in `/etc/systemd/system/shared.service`:
+
+```ini
+[Unit]
+Description=shared site platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/sharedd
+Environment=SHARED_ADDR=:8787
+Environment=SHARED_DATA=/var/lib/shared
+Environment=SHARED_BASE_HOST=localhost
+DynamicUser=yes
+StateDirectory=shared
+WorkingDirectory=/var/lib/shared
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now shared
+```
 
 ## CLI
 
