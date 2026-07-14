@@ -36,7 +36,121 @@ xdg-open http://hello.localhost:8787
 ```
 
 The homepage at `http://localhost:8787` lists all deployed sites, each with its
-on-disk size and last-updated time.
+on-disk size and last-updated time. Each site card also has a `×` button that
+deletes the site and all its data (same as `shared rm`).
+
+## Install
+
+Two parts: `sharedd`, the server you host on one Linux box on your network,
+and `shared`, the CLI you run from any machine to deploy to it. The server
+only ships for Linux; the CLI ships for Linux and Windows.
+
+### Hosting the server
+
+**NixOS / Nix.** The flake packages both binaries:
+
+```sh
+nix profile install github:sdelcore/shared
+```
+
+On NixOS, use the bundled module instead — it runs `sharedd` as a hardened
+systemd service with state in `/var/lib/shared`:
+
+```nix
+{
+  inputs.shared.url = "github:sdelcore/shared";
+}
+```
+
+```nix
+{ inputs, ... }:
+{
+  imports = [ inputs.shared.nixosModules.default ];
+
+  services.shared = {
+    enable = true;
+    baseHost = "shared.tap";     # sites at <name>.shared.tap
+    openFirewall = true;
+    # environmentFile = "/run/secrets/shared.env";  # OPENAI_BASE_URL, OPENAI_API_KEY
+  };
+}
+```
+
+**Ubuntu / other Linux.** Download a static binary tarball from the
+[releases page](https://github.com/sdelcore/shared/releases) and install it:
+
+```sh
+tar -xzf shared_*_linux_amd64.tar.gz
+sudo install -m 0755 sharedd shared /usr/local/bin/
+```
+
+Or build from source. This needs Go 1.24+, which is newer than what Ubuntu
+24.04's apt ships — install it from [go.dev/dl](https://go.dev/dl/):
+
+```sh
+CGO_ENABLED=0 go install github.com/sdelcore/shared/cmd/...@latest
+```
+
+The binaries are pure Go and fully static; nothing else is required. To run
+the server under systemd, drop this in `/etc/systemd/system/shared.service`:
+
+```ini
+[Unit]
+Description=shared site platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/sharedd
+Environment=SHARED_ADDR=:8787
+Environment=SHARED_DATA=/var/lib/shared
+Environment=SHARED_BASE_HOST=localhost
+DynamicUser=yes
+StateDirectory=shared
+WorkingDirectory=/var/lib/shared
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now shared
+```
+
+### Installing the CLI
+
+Any machine on the network can deploy to the server; point the CLI at it with
+`--server` or `$SHARED_SERVER` (default `http://localhost:8787`).
+
+**Linux / macOS.** The linux release tarball above includes the CLI, or:
+
+```sh
+go install github.com/sdelcore/shared/cmd/shared@latest
+```
+
+**Windows** (CLI only — the server is not supported on Windows). Download
+`shared_<version>_windows_amd64.zip` (or `arm64`) from the
+[releases page](https://github.com/sdelcore/shared/releases), unzip
+`shared.exe` somewhere on `PATH`, and set the server once:
+
+```powershell
+setx SHARED_SERVER http://shared.tap
+shared list
+```
+
+**Or let your agent do it.** The repo ships an
+[install-shared-cli](skills/install-shared-cli/SKILL.md) agent skill that
+picks the right method for the current OS. Copy it into your agent's skill
+directory and ask it to install the CLI:
+
+```sh
+# Claude Code
+git clone --depth 1 https://github.com/sdelcore/shared /tmp/shared-skill
+cp -r /tmp/shared-skill/skills/install-shared-cli ~/.claude/skills/
+```
 
 ## CLI
 
