@@ -32,6 +32,24 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid site name")
 		return
 	}
+	deployer := sanitizeDeployer(r.Header.Get("X-Shared-Deployer"))
+
+	// Optimistic concurrency: a client that knows which version it is
+	// replacing sends it in X-Shared-Prev-Version; if the site has moved on
+	// since, refuse with the conflicting deploy's details so the client can
+	// warn before overwriting. Clients that send no version (curl, older
+	// CLIs) are not checked.
+	if prev := r.Header.Get("X-Shared-Prev-Version"); prev != "" && r.Header.Get("X-Shared-Force") != "1" {
+		if cur := s.meta.current(site); cur != nil && prev != strconv.FormatInt(cur.Seq, 10) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":    "version conflict",
+				"version":  cur.Seq,
+				"deployer": cur.Deployer,
+				"time":     cur.Time,
+			})
+			return
+		}
+	}
 
 	tmpDir, err := os.MkdirTemp(s.DataDir, "deploy-*")
 	if err != nil {
@@ -88,9 +106,11 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"site": site,
-		"url":  s.siteURL(site),
+	seq := s.meta.record(site, deployer, "deploy")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"site":    site,
+		"url":     s.siteURL(site),
+		"version": seq,
 	})
 }
 
@@ -137,9 +157,11 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 	}
 	s.pruneVersions(site)
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"site": site,
-		"url":  s.siteURL(site),
+	seq := s.meta.record(site, sanitizeDeployer(r.Header.Get("X-Shared-Deployer")), "rollback")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"site":    site,
+		"url":     s.siteURL(site),
+		"version": seq,
 	})
 }
 
@@ -159,7 +181,11 @@ func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request) {
 		ts, _ := versionKey(names[i])
 		versions = append(versions, map[string]any{"timestamp": ts})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"versions": versions})
+	out := map[string]any{"versions": versions}
+	if cur := s.meta.current(site); cur != nil {
+		out["current"] = cur
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
@@ -174,6 +200,7 @@ func (s *Server) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.DropSite(name)
+	s.meta.drop(name)
 	for _, p := range []string{
 		siteDir,
 		filepath.Join(s.DataDir, "db", name),
@@ -387,11 +414,18 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 		if info, err := e.Info(); err == nil {
 			updatedAt = info.ModTime().UTC().Format(time.RFC3339)
 		}
-		sites = append(sites, map[string]any{
+		entry := map[string]any{
 			"name":      e.Name(),
 			"updatedAt": updatedAt,
 			"bytes":     s.siteBytes(e.Name()),
-		})
+		}
+		views, current, deploys := s.meta.stats(e.Name())
+		entry["views"] = views.Total
+		if current != nil {
+			entry["deployer"] = current.Deployer
+			entry["deploys"] = deploys
+		}
+		sites = append(sites, entry)
 	}
 	sort.Slice(sites, func(i, j int) bool {
 		return sites[i]["name"].(string) < sites[j]["name"].(string)

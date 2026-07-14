@@ -102,6 +102,10 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+	// Count page views, not asset fetches: only GETs of HTML documents.
+	if r.Method == http.MethodGet && strings.HasSuffix(target, ".html") {
+		s.meta.countView(site)
+	}
 	http.ServeContent(w, r, target, info.ModTime(), f)
 }
 

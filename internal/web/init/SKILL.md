@@ -97,6 +97,11 @@ tarball and POSTs it. The site goes live immediately at
 `--name` defaults to the lowercased directory base name; `--server` overrides
 the target (default `http://localhost:8787`, or `$SHARED_SERVER`).
 
+Deploys are attributed (`user@hostname`) and guarded against overwriting
+someone else's deploy: if the site changed since your last deploy, the CLI
+asks before overwriting. Non-interactive runs get "deploy cancelled" —
+re-run with `--force` if overwriting is intended.
+
 Data is scoped strictly by the first label of the request Host, so one site
 cannot reach another's db/uploads/ws. Site names must match
 `^[a-z0-9][a-z0-9-]{0,62}$`.
@@ -104,7 +109,7 @@ cannot reach another's db/uploads/ws. Site names must match
 ## Managing sites
 
 ```sh
-shared list                # deployed sites with size and last-updated time
+shared list                # deployed sites with size, views, last deployer
 shared open mysite         # print + open the site URL
 shared versions mysite     # saved prior deploys, newest first
 shared rollback mysite     # swap in the newest version (reversible)
