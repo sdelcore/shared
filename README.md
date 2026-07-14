@@ -41,9 +41,13 @@ deletes the site and all its data (same as `shared rm`).
 
 ## Install
 
-### Nix
+Two parts: `sharedd`, the server you host on one Linux box on your network,
+and `shared`, the CLI you run from any machine to deploy to it. The server
+only ships for Linux; the CLI ships for Linux and Windows.
 
-The flake packages both binaries (`sharedd` and `shared`):
+### Hosting the server
+
+**NixOS / Nix.** The flake packages both binaries:
 
 ```sh
 nix profile install github:sdelcore/shared
@@ -72,9 +76,7 @@ systemd service with state in `/var/lib/shared`:
 }
 ```
 
-### Ubuntu / other Linux
-
-Download a static binary tarball from the
+**Ubuntu / other Linux.** Download a static binary tarball from the
 [releases page](https://github.com/sdelcore/shared/releases) and install it:
 
 ```sh
@@ -118,14 +120,26 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now shared
 ```
 
-### Windows
+### Installing the CLI
 
-Download `shared_<version>_windows_amd64.zip` (or `arm64`) from the
-[releases page](https://github.com/sdelcore/shared/releases), unzip, and run
-`sharedd.exe`. Set env vars like `SHARED_DATA` first if you don't want data
-next to the exe; `*.localhost` subdomains resolve in modern browsers on
-Windows too. To keep it running in the background, register it with Task
-Scheduler or a service wrapper like [NSSM](https://nssm.cc/).
+Any machine on the network can deploy to the server; point the CLI at it with
+`--server` or `$SHARED_SERVER` (default `http://localhost:8787`).
+
+**Linux / macOS.** The linux release tarball above includes the CLI, or:
+
+```sh
+go install github.com/sdelcore/shared/cmd/shared@latest
+```
+
+**Windows** (CLI only — the server is not supported on Windows). Download
+`shared_<version>_windows_amd64.zip` (or `arm64`) from the
+[releases page](https://github.com/sdelcore/shared/releases), unzip
+`shared.exe` somewhere on `PATH`, and set the server once:
+
+```powershell
+setx SHARED_SERVER http://shared.tap
+shared list
+```
 
 ## CLI
 

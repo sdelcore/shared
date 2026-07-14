@@ -27,11 +27,12 @@ jobs:
               go build -trimpath -ldflags "-s -w" -o "$out/" ./cmd/...
             tar -C "$out" -czf "$out.tar.gz" sharedd shared
 
+            # windows is CLI-only; the server ships for linux
             out="dist/shared_${version}_windows_${arch}"
             mkdir -p "$out"
             CGO_ENABLED=0 GOOS=windows GOARCH="$arch" \
-              go build -trimpath -ldflags "-s -w" -o "$out/" ./cmd/...
-            (cd "$out" && zip -q "../$(basename "$out").zip" sharedd.exe shared.exe)
+              go build -trimpath -ldflags "-s -w" -o "$out/" ./cmd/shared
+            (cd "$out" && zip -q "../$(basename "$out").zip" shared.exe)
           done
 
       - name: Create release
