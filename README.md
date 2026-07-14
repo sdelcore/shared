@@ -141,6 +141,17 @@ setx SHARED_SERVER http://shared.tap
 shared list
 ```
 
+**Or let your agent do it.** The repo ships an
+[install-shared-cli](skills/install-shared-cli/SKILL.md) agent skill that
+picks the right method for the current OS. Copy it into your agent's skill
+directory and ask it to install the CLI:
+
+```sh
+# Claude Code
+git clone --depth 1 https://github.com/sdelcore/shared /tmp/shared-skill
+cp -r /tmp/shared-skill/skills/install-shared-cli ~/.claude/skills/
+```
+
 ## CLI
 
 The `shared` binary talks to the server over HTTP (`--server`, default
