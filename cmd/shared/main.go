@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -276,7 +277,14 @@ func cmdOpen(args []string) {
 	}
 	siteURL := u.Scheme + "://" + host + "/"
 	fmt.Println(siteURL)
-	exec.Command("xdg-open", siteURL).Start()
+	switch runtime.GOOS {
+	case "windows":
+		exec.Command("rundll32", "url.dll,FileProtocolHandler", siteURL).Start()
+	case "darwin":
+		exec.Command("open", siteURL).Start()
+	default:
+		exec.Command("xdg-open", siteURL).Start()
+	}
 }
 
 func cmdRm(args []string) {

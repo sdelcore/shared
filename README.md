@@ -118,6 +118,15 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now shared
 ```
 
+### Windows
+
+Download `shared_<version>_windows_amd64.zip` (or `arm64`) from the
+[releases page](https://github.com/sdelcore/shared/releases), unzip, and run
+`sharedd.exe`. Set env vars like `SHARED_DATA` first if you don't want data
+next to the exe; `*.localhost` subdomains resolve in modern browsers on
+Windows too. To keep it running in the background, register it with Task
+Scheduler or a service wrapper like [NSSM](https://nssm.cc/).
+
 ## CLI
 
 The `shared` binary talks to the server over HTTP (`--server`, default
