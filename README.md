@@ -357,9 +357,10 @@ evicts its in-memory collection state, closing any open subscriptions.
 ## Deploy attribution and overwrite protection
 
 Every deploy and rollback is recorded in `meta/<site>.json` with a sequence
-number, timestamp, and deployer identity (`user@hostname`, sent by the CLI as
-`X-Shared-Deployer`). `shared list` and `shared versions` show who deployed
-last.
+number, timestamp, and deployer identity, sent by the CLI as
+`X-Shared-Deployer`: the git email configured for the deployed directory plus
+the machine, e.g. `you@example.com (user@hostname)`, or just `user@hostname`
+without git. `shared list` and `shared versions` show who deployed last.
 
 Deploys are also guarded against accidental overwrites, git
 `--force-with-lease` style: the CLI remembers the version it last deployed

@@ -114,7 +114,7 @@ func cmdDeploy(args []string) {
 		fatal("packing %s: %v", dir, err)
 	}
 
-	deployer := deployerIdentity()
+	deployer := deployerIdentity(abs)
 	prevSeq := loadDeployState(abs, *name, *server)
 
 	// With no local deploy state (fresh checkout, new machine) the server
@@ -190,7 +190,9 @@ func postDeploy(endpoint string, data []byte, deployer string, prevSeq int64, fo
 	return resp.StatusCode, body
 }
 
-func deployerIdentity() string {
+// deployerIdentity is the git email configured for dir (repo-local config
+// wins) plus the machine's user@host, or just user@host without git.
+func deployerIdentity(dir string) string {
 	name := os.Getenv("USER")
 	if name == "" {
 		if u, err := user.Current(); err == nil {
@@ -204,7 +206,13 @@ func deployerIdentity() string {
 	if err != nil || host == "" {
 		host = "unknown"
 	}
-	return name + "@" + host
+	id := name + "@" + host
+	if out, err := exec.Command("git", "-C", dir, "config", "user.email").Output(); err == nil {
+		if email := strings.TrimSpace(string(out)); email != "" {
+			return email + " (" + id + ")"
+		}
+	}
+	return id
 }
 
 type deployInfo struct {
@@ -493,7 +501,7 @@ func cmdRollback(args []string) {
 	if err != nil {
 		fatal("%v", err)
 	}
-	req.Header.Set("X-Shared-Deployer", deployerIdentity())
+	req.Header.Set("X-Shared-Deployer", deployerIdentity("."))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fatal("%v", err)

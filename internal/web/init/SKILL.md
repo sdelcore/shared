@@ -97,7 +97,8 @@ tarball and POSTs it. The site goes live immediately at
 `--name` defaults to the lowercased directory base name; `--server` overrides
 the target (default `http://localhost:8787`, or `$SHARED_SERVER`).
 
-Deploys are attributed (`user@hostname`) and guarded against overwriting
+Deploys are attributed (git email if configured, plus `user@hostname`) and
+guarded against overwriting
 someone else's deploy: if the site changed since your last deploy, the CLI
 asks before overwriting. Non-interactive runs get "deploy cancelled" —
 re-run with `--force` if overwriting is intended.
