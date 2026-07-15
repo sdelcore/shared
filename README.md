@@ -159,8 +159,9 @@ The `shared` binary talks to the server over HTTP (`--server`, default
 
 ```sh
 shared init [dir]                 # scaffold index.html + a shared-sites agent skill
-shared deploy [dir] --name NAME   # pack a directory and deploy it
-shared list                       # deployed sites with size + last-updated time
+shared deploy [dir] --name NAME   # pack a directory and deploy it (--force skips
+                                  # the overwrite check)
+shared list                       # deployed sites with size, views, last deployer
 shared open NAME                  # print and open a site URL
 shared versions NAME              # a site's saved versions, newest first
 shared rollback NAME              # roll back to the newest saved version
@@ -287,10 +288,10 @@ derived from `SHARED_USER` (or `$USER`).
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/deploy?site=N` | Body: gzipped tarball of site dir → `{"site","url"}` |
-| `POST` | `/api/rollback?site=N` | Restore the newest saved version → `{"site","url"}` |
-| `GET` | `/api/versions?site=N` | `{"versions":[{"timestamp"}]}`, newest first |
-| `GET` | `/api/sites` | `{"sites":[{"name","updatedAt","bytes"}]}` (`bytes` = total on-disk size) |
+| `POST` | `/api/deploy?site=N` | Body: gzipped tarball of site dir → `{"site","url","version"}`; 409 on version conflict (see below) |
+| `POST` | `/api/rollback?site=N` | Restore the newest saved version → `{"site","url","version"}` |
+| `GET` | `/api/versions?site=N` | `{"current":{"seq","time","deployer","source"},"versions":[{"timestamp"}]}`, newest first |
+| `GET` | `/api/sites` | `{"sites":[{"name","updatedAt","bytes","views","deployer","deploys"}]}` (`bytes` = total on-disk size) |
 | `DELETE` | `/api/sites/{name}` | Remove a site and all its data → `{"deleted":true}` |
 | `GET` | `/api/export` | Streams a gzipped tarball of the entire data directory |
 | `GET` | `/api/db/{col}` | `{"docs":[...]}` |
@@ -331,6 +332,7 @@ data/
   versions/<site>/<ts>/    prior deploys kept for rollback, named by unix time
   db/<site>/<col>.json     document store, one JSON file per collection
   uploads/<site>/          uploaded files
+  meta/<site>.json         deploy history + view counts
   identity.json            optional identity override: {"email","name"}
 ```
 
@@ -351,3 +353,33 @@ shared rm mysite           # delete the site, its db, uploads, and versions
 
 `shared rm` (or `DELETE /api/sites/<name>`) removes everything for a site and
 evicts its in-memory collection state, closing any open subscriptions.
+
+## Deploy attribution and overwrite protection
+
+Every deploy and rollback is recorded in `meta/<site>.json` with a sequence
+number, timestamp, and deployer identity, sent by the CLI as
+`X-Shared-Deployer`: the git email configured for the deployed directory plus
+the machine, e.g. `you@example.com (user@hostname)`, or just `user@hostname`
+without git. `shared list` and `shared versions` show who deployed last.
+
+Deploys are also guarded against accidental overwrites, git
+`--force-with-lease` style: the CLI remembers the version it last deployed
+(in `.shared/state.json` next to the site, never uploaded) and sends it as
+`X-Shared-Prev-Version`. If someone else deployed in between, the server
+answers 409 with their identity and the CLI asks before overwriting:
+
+```
+hello was deployed by alice@dayman at 2026-07-14T23:40:23Z since your last deploy — overwrite? [y/N]
+```
+
+With no local state (fresh checkout, new machine) the CLI instead asks the
+server who deployed last and warns if it wasn't you. `--force` (or the
+`X-Shared-Force: 1` header) skips both checks; requests without a
+prev-version header (curl, older CLIs) are accepted unchecked.
+
+## Metrics
+
+The server counts page views per site — `GET` requests for HTML documents,
+not assets or API calls — batched in memory and flushed to `meta/<site>.json`
+every 30 seconds, with per-day buckets kept for 30 days. Totals show up in
+`shared list`, on the homepage, and in `GET /api/sites`.

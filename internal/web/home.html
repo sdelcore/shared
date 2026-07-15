@@ -200,6 +200,9 @@ shared deploy ./mysite --name mysite
       const meta = document.createElement('div');
       meta.className = 'meta';
       const parts = [humanSize(site.bytes)];
+      if (site.views) {
+        parts.push(site.views + (site.views === 1 ? ' view' : ' views'));
+      }
       if (site.updatedAt) {
         parts.push('updated ' + new Date(site.updatedAt).toLocaleString());
       }

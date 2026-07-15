@@ -15,6 +15,7 @@ type Server struct {
 	KeepVersions            int
 
 	store *store.Store
+	meta  *metaStore
 	hub   *Hub
 	api   *http.ServeMux
 	ai    *limiter
@@ -30,12 +31,17 @@ func New(addr, dataDir, baseHost string, keepVersions int) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	meta, err := newMetaStore(filepath.Join(dataDir, "meta"))
+	if err != nil {
+		return nil, err
+	}
 	s := &Server{
 		Addr:         addr,
 		DataDir:      dataDir,
 		BaseHost:     baseHost,
 		KeepVersions: keepVersions,
 		store:        st,
+		meta:         meta,
 		hub:          NewHub(),
 		api:          http.NewServeMux(),
 		ai:           newAILimiter(),

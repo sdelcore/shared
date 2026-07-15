@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
@@ -14,8 +15,10 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,7 +28,8 @@ import (
 const usage = `usage: shared <command> [arguments]
 
 commands:
-  deploy [dir] [--name NAME] [--server URL]   deploy a site directory
+  deploy [dir] [--name NAME] [--server URL] [--force]
+                                              deploy a site directory
   list [--server URL]                         list deployed sites
   open NAME [--server URL]                    print and open a site URL
   rm NAME [--server URL]                      delete a site and its data
@@ -81,6 +85,7 @@ func cmdDeploy(args []string) {
 	fs := flag.NewFlagSet("deploy", flag.ExitOnError)
 	name := fs.String("name", "", "site name (default: directory base name)")
 	server := fs.String("server", defaultServer(), "shared server URL")
+	force := fs.Bool("force", false, "overwrite without checking who deployed last")
 	fs.Parse(args)
 
 	dir := "."
@@ -109,24 +114,180 @@ func cmdDeploy(args []string) {
 		fatal("packing %s: %v", dir, err)
 	}
 
+	deployer := deployerIdentity(abs)
+	prevSeq := loadDeployState(abs, *name, *server)
+
+	// With no local deploy state (fresh checkout, new machine) the server
+	// cannot check for us, so ask it who deployed last and warn if it wasn't
+	// this identity.
+	if prevSeq == 0 && !*force {
+		if cur := currentDeploy(*server, *name); cur != nil && cur.Deployer != "" && cur.Deployer != deployer {
+			if !confirm(fmt.Sprintf("%s was last deployed by %s at %s — overwrite?", *name, cur.Deployer, cur.Time)) {
+				fatal("deploy cancelled")
+			}
+		}
+	}
+
 	endpoint := strings.TrimRight(*server, "/") + "/api/deploy?site=" + url.QueryEscape(*name)
-	resp, err := http.Post(endpoint, "application/gzip", tarball)
+	data := tarball.Bytes()
+	status, body := postDeploy(endpoint, data, deployer, prevSeq, *force)
+
+	if status == http.StatusConflict {
+		var c struct {
+			Deployer string `json:"deployer"`
+			Time     string `json:"time"`
+		}
+		json.Unmarshal(body, &c)
+		if c.Deployer == "" {
+			c.Deployer = "someone else"
+		}
+		if c.Time == "" {
+			c.Time = "an unknown time"
+		}
+		if !confirm(fmt.Sprintf("%s was deployed by %s at %s since your last deploy — overwrite?", *name, c.Deployer, c.Time)) {
+			fatal("deploy cancelled")
+		}
+		status, body = postDeploy(endpoint, data, deployer, prevSeq, true)
+	}
+
+	if status < 200 || status > 299 {
+		fatal("deploy failed: %s", serverError(body, http.StatusText(status)))
+	}
+	var out struct {
+		URL     string `json:"url"`
+		Version int64  `json:"version"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil || out.URL == "" {
+		fatal("unexpected response: %s", strings.TrimSpace(string(body)))
+	}
+	if out.Version > 0 {
+		saveDeployState(abs, *name, *server, out.Version)
+	}
+	fmt.Println(out.URL)
+}
+
+func postDeploy(endpoint string, data []byte, deployer string, prevSeq int64, force bool) (int, []byte) {
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(data))
+	if err != nil {
+		fatal("%v", err)
+	}
+	req.Header.Set("Content-Type", "application/gzip")
+	if deployer != "" {
+		req.Header.Set("X-Shared-Deployer", deployer)
+	}
+	if prevSeq > 0 {
+		req.Header.Set("X-Shared-Prev-Version", strconv.FormatInt(prevSeq, 10))
+	}
+	if force {
+		req.Header.Set("X-Shared-Force", "1")
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fatal("%v", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, body
+}
 
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		fatal("deploy failed: %s", serverError(body, resp.Status))
+// deployerIdentity is the git email configured for dir (repo-local config
+// wins) plus the machine's user@host, or just user@host without git.
+func deployerIdentity(dir string) string {
+	name := os.Getenv("USER")
+	if name == "" {
+		if u, err := user.Current(); err == nil {
+			name = u.Username
+		}
+	}
+	if name == "" {
+		name = "unknown"
+	}
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown"
+	}
+	id := name + "@" + host
+	if out, err := exec.Command("git", "-C", dir, "config", "user.email").Output(); err == nil {
+		if email := strings.TrimSpace(string(out)); email != "" {
+			return email + " (" + id + ")"
+		}
+	}
+	return id
+}
+
+type deployInfo struct {
+	Seq      int64  `json:"seq"`
+	Time     string `json:"time"`
+	Deployer string `json:"deployer"`
+	Source   string `json:"source"`
+}
+
+func currentDeploy(server, name string) *deployInfo {
+	resp, err := http.Get(strings.TrimRight(server, "/") + "/api/versions?site=" + url.QueryEscape(name))
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
 	}
 	var out struct {
-		URL string `json:"url"`
+		Current *deployInfo `json:"current"`
 	}
-	if err := json.Unmarshal(body, &out); err != nil || out.URL == "" {
-		fatal("unexpected response: %s", strings.TrimSpace(string(body)))
+	if json.NewDecoder(resp.Body).Decode(&out) != nil {
+		return nil
 	}
-	fmt.Println(out.URL)
+	return out.Current
+}
+
+func confirm(prompt string) bool {
+	fmt.Fprintf(os.Stderr, "%s [y/N] ", prompt)
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	line = strings.ToLower(strings.TrimSpace(line))
+	return line == "y" || line == "yes"
+}
+
+type deployState struct {
+	Deploys map[string]int64 `json:"deploys"`
+}
+
+func stateFile(dir string) string {
+	return filepath.Join(dir, ".shared", "state.json")
+}
+
+func stateKey(name, server string) string {
+	return name + "@" + strings.TrimRight(server, "/")
+}
+
+func loadDeployState(dir, name, server string) int64 {
+	data, err := os.ReadFile(stateFile(dir))
+	if err != nil {
+		return 0
+	}
+	var st deployState
+	if json.Unmarshal(data, &st) != nil {
+		return 0
+	}
+	return st.Deploys[stateKey(name, server)]
+}
+
+func saveDeployState(dir, name, server string, seq int64) {
+	st := deployState{}
+	if data, err := os.ReadFile(stateFile(dir)); err == nil {
+		json.Unmarshal(data, &st)
+	}
+	if st.Deploys == nil {
+		st.Deploys = map[string]int64{}
+	}
+	st.Deploys[stateKey(name, server)] = seq
+	b, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(stateFile(dir)), 0o755); err != nil {
+		return
+	}
+	os.WriteFile(stateFile(dir), b, 0o644)
 }
 
 func buildTarball(root string) (*bytes.Buffer, error) {
@@ -239,6 +400,8 @@ func cmdList(args []string) {
 			Name      string `json:"name"`
 			UpdatedAt string `json:"updatedAt"`
 			Bytes     int64  `json:"bytes"`
+			Views     int64  `json:"views"`
+			Deployer  string `json:"deployer"`
 		} `json:"sites"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
@@ -249,7 +412,11 @@ func cmdList(args []string) {
 		return
 	}
 	for _, site := range out.Sites {
-		fmt.Printf("%s\t%s\t%s\n", site.Name, humanSize(site.Bytes), site.UpdatedAt)
+		deployer := site.Deployer
+		if deployer == "" {
+			deployer = "-"
+		}
+		fmt.Printf("%s\t%s\t%d views\t%s\t%s\n", site.Name, humanSize(site.Bytes), site.Views, deployer, site.UpdatedAt)
 	}
 }
 
@@ -330,7 +497,12 @@ func cmdRollback(args []string) {
 	fs.Parse(fs.Args()[1:])
 
 	endpoint := strings.TrimRight(*server, "/") + "/api/rollback?site=" + url.QueryEscape(name)
-	resp, err := http.Post(endpoint, "", nil)
+	req, err := http.NewRequest(http.MethodPost, endpoint, nil)
+	if err != nil {
+		fatal("%v", err)
+	}
+	req.Header.Set("X-Shared-Deployer", deployerIdentity("."))
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fatal("%v", err)
 	}
@@ -372,12 +544,20 @@ func cmdVersions(args []string) {
 		fatal("versions failed: %s", serverError(body, resp.Status))
 	}
 	var out struct {
+		Current  *deployInfo `json:"current"`
 		Versions []struct {
 			Timestamp int64 `json:"timestamp"`
 		} `json:"versions"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		fatal("unexpected response: %s", strings.TrimSpace(string(body)))
+	}
+	if out.Current != nil {
+		deployer := out.Current.Deployer
+		if deployer == "" {
+			deployer = "unknown"
+		}
+		fmt.Printf("current\tv%d\t%s (%s)\t%s\n", out.Current.Seq, deployer, out.Current.Source, out.Current.Time)
 	}
 	if len(out.Versions) == 0 {
 		fmt.Println("(none)")
