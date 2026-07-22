@@ -159,6 +159,7 @@ The `shared` binary talks to the server over HTTP (`--server`, default
 
 ```sh
 shared init [dir]                 # scaffold index.html + a shared-sites agent skill
+shared skill install [--force]    # install the shared-sites skill into ~/.claude/skills
 shared deploy [dir] --name NAME   # pack a directory and deploy it (--force skips
                                   # the overwrite check)
 shared list                       # deployed sites with size, views, last deployer
@@ -171,7 +172,10 @@ shared backup [file]              # download a gzipped tarball of all server dat
 
 `shared init` writes a minimal `index.html` and
 `.claude/skills/shared-sites/SKILL.md` (an agent skill documenting the client
-API), refusing to overwrite existing files. `shared backup` defaults to
+API) into a site directory, refusing to overwrite existing files. `shared skill
+install` writes that same skill to `~/.claude/skills/shared-sites/SKILL.md` so
+it is available to agents in every project, not just a scaffolded one; it skips
+an existing file unless `--force` is given. `shared backup` defaults to
 `shared-backup-<yyyymmdd-hhmmss>.tar.gz` in the current directory.
 
 ## Subdomain routing
