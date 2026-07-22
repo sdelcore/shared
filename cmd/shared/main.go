@@ -37,6 +37,7 @@ commands:
   versions NAME [--server URL]                list a site's saved versions
   backup [file] [--server URL]                download a tarball of all server data
   init [dir]                                  scaffold a new site directory
+  skill install [--force]                     install the shared-sites skill into ~/.claude/skills
 `
 
 func main() {
@@ -61,6 +62,8 @@ func main() {
 		cmdBackup(os.Args[2:])
 	case "init":
 		cmdInit(os.Args[2:])
+	case "skill":
+		cmdSkill(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -641,6 +644,35 @@ func cmdInit(args []string) {
 		}
 		fmt.Printf("wrote %s\n", file.path)
 	}
+}
+
+func cmdSkill(args []string) {
+	if len(args) < 1 || args[0] != "install" {
+		fmt.Fprintln(os.Stderr, "usage: shared skill install [--force]")
+		os.Exit(2)
+	}
+	fs := flag.NewFlagSet("skill install", flag.ExitOnError)
+	force := fs.Bool("force", false, "overwrite an existing skill file")
+	fs.Parse(args[1:])
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fatal("%v", err)
+	}
+	dest := filepath.Join(home, ".claude", "skills", "shared-sites", "SKILL.md")
+	if _, err := os.Stat(dest); err == nil && !*force {
+		fmt.Printf("skip %s (exists; --force to overwrite)\n", dest)
+		return
+	} else if err != nil && !os.IsNotExist(err) {
+		fatal("%v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		fatal("%v", err)
+	}
+	if err := os.WriteFile(dest, web.InitSkillMD, 0o644); err != nil {
+		fatal("writing %s: %v", dest, err)
+	}
+	fmt.Printf("wrote %s\n", dest)
 }
 
 func humanSize(n int64) string {
