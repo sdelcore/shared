@@ -65,6 +65,8 @@ func New(addr, dataDir, baseHost string, keepVersions int) (*Server, error) {
 	s.api.HandleFunc("POST /api/uploads", s.handleUpload)
 	s.api.HandleFunc("GET /api/identity", s.handleIdentity)
 	s.api.HandleFunc("GET /api/ws", s.handleWS)
+	s.api.HandleFunc("GET /api/skills", s.handleSkillsList)
+	s.api.HandleFunc("GET /api/skills/{name}", s.handleSkillGet)
 
 	return s, nil
 }
@@ -76,6 +78,10 @@ func (s *Server) ListenAndServe() error {
 			s.api.ServeHTTP(w, r)
 		case r.URL.Path == "/shared.js":
 			s.handleSharedJS(w, r)
+		// Base host only: on a site host this path belongs to the site, and
+		// intercepting it would shadow a deployed file of the same name.
+		case r.URL.Path == "/skill.md" && siteFromHost(r.Host, s.BaseHost) == "":
+			s.handleSkillMD(w, r)
 		case strings.HasPrefix(r.URL.Path, "/uploads/"):
 			s.handleServeUpload(w, r)
 		default:
