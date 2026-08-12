@@ -143,13 +143,14 @@ shared list
 
 **Or let your agent do it.** The repo ships an
 [install-shared-cli](skills/install-shared-cli/SKILL.md) agent skill that
-picks the right method for the current OS. Copy it into your agent's skill
-directory and ask it to install the CLI:
+picks the right method for the current OS. A running server serves it, so no
+clone is needed:
 
 ```sh
 # Claude Code
-git clone --depth 1 https://github.com/sdelcore/shared /tmp/shared-skill
-cp -r /tmp/shared-skill/skills/install-shared-cli ~/.claude/skills/
+mkdir -p ~/.claude/skills/install-shared-cli
+curl -sfo ~/.claude/skills/install-shared-cli/SKILL.md \
+  "$SHARED_SERVER/api/skills/install-shared-cli"
 ```
 
 ## CLI
@@ -177,6 +178,25 @@ install` writes that same skill to `~/.claude/skills/shared-sites/SKILL.md` so
 it is available to agents in every project, not just a scaffolded one; it skips
 an existing file unless `--force` is given. `shared backup` defaults to
 `shared-backup-<yyyymmdd-hhmmss>.tar.gz` in the current directory.
+
+## Agent skills
+
+The skills live in [`skills/`](skills/) as ordinary markdown, are embedded in
+both binaries, and are served by a running server:
+
+| Endpoint | Returns |
+|---|---|
+| `GET /skill.md` | the `shared-sites` skill (base host only) |
+| `GET /api/skills` | the available skills and their URLs |
+| `GET /api/skills/<name>` | one skill as `text/markdown` |
+
+`/skill.md` is served on the base host only. On a site host that path belongs
+to the site, so a deployed file of the same name still wins.
+
+`shared skill install` fetches from the server first and falls back to its
+built-in copy when the server is unreachable. The reason: an agent then reads
+the skill for the server it is deploying to, not the one the CLI was built
+from.
 
 ## Subdomain routing
 

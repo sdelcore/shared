@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/sdelcore/shared/internal/web"
+	"github.com/sdelcore/shared/skills"
 )
 
 const usage = `usage: shared <command> [arguments]
@@ -37,7 +38,7 @@ commands:
   versions NAME [--server URL]                list a site's saved versions
   backup [file] [--server URL]                download a tarball of all server data
   init [dir]                                  scaffold a new site directory
-  skill install [--force]                     install the shared-sites skill into ~/.claude/skills
+  skill install [--force] [--server URL]      install the shared-sites skill into ~/.claude/skills
 `
 
 func main() {
@@ -627,7 +628,7 @@ func cmdInit(args []string) {
 		content []byte
 	}{
 		{filepath.Join(dir, "index.html"), web.InitIndexHTML},
-		{filepath.Join(dir, ".claude", "skills", "shared-sites", "SKILL.md"), web.InitSkillMD},
+		{filepath.Join(dir, ".claude", "skills", "shared-sites", "SKILL.md"), embeddedSkill()},
 	}
 	for _, file := range files {
 		if _, err := os.Stat(file.path); err == nil {
@@ -646,13 +647,46 @@ func cmdInit(args []string) {
 	}
 }
 
+func embeddedSkill() []byte {
+	body, err := skills.Get(skills.SharedSites)
+	if err != nil {
+		fatal("%v", err)
+	}
+	return body
+}
+
+// fetchSkill pulls the skill from the server so the installed copy matches the
+// server that is actually running, not the version this CLI was built from.
+func fetchSkill(server, name string) ([]byte, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(strings.TrimRight(server, "/") + "/api/skills/" + name)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s", resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	// An older server has no skills endpoint and a proxy may answer with an
+	// error page, so require the frontmatter a skill file always starts with.
+	if !bytes.HasPrefix(body, []byte("---\n")) {
+		return nil, fmt.Errorf("not a skill file")
+	}
+	return body, nil
+}
+
 func cmdSkill(args []string) {
 	if len(args) < 1 || args[0] != "install" {
-		fmt.Fprintln(os.Stderr, "usage: shared skill install [--force]")
+		fmt.Fprintln(os.Stderr, "usage: shared skill install [--force] [--server URL]")
 		os.Exit(2)
 	}
 	fs := flag.NewFlagSet("skill install", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite an existing skill file")
+	server := fs.String("server", defaultServer(), "shared server URL")
 	fs.Parse(args[1:])
 
 	home, err := os.UserHomeDir()
@@ -666,13 +700,21 @@ func cmdSkill(args []string) {
 	} else if err != nil && !os.IsNotExist(err) {
 		fatal("%v", err)
 	}
+
+	body, err := fetchSkill(*server, skills.SharedSites)
+	source := *server
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "shared: fetching skill from %s: %v (using built-in copy)\n", *server, err)
+		body, source = embeddedSkill(), "built-in copy"
+	}
+
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		fatal("%v", err)
 	}
-	if err := os.WriteFile(dest, web.InitSkillMD, 0o644); err != nil {
+	if err := os.WriteFile(dest, body, 0o644); err != nil {
 		fatal("writing %s: %v", dest, err)
 	}
-	fmt.Printf("wrote %s\n", dest)
+	fmt.Printf("wrote %s (from %s)\n", dest, source)
 }
 
 func humanSize(n int64) string {
