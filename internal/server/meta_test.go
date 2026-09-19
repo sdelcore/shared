@@ -1,25 +1,35 @@
 package server
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestCreationTimeSurvivesDeployHistoryRetention(t *testing.T) {
-	m, err := newMetaStore(t.TempDir())
+	dir := t.TempDir()
+	m, err := newMetaStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	m.record("site", "alice", "first")
-	_, _, createdAt, _ := m.stats("site")
-	if createdAt == "" {
-		t.Fatal("creation time was not recorded")
+	const createdAt = "2001-02-03T04:05:06Z"
+	m.mu.Lock()
+	m.cache["site"] = &siteMeta{
+		CreatedAt: createdAt,
+		Deploys: []deployRecord{{
+			Seq:  1,
+			Time: createdAt,
+		}},
 	}
+	m.persist("site")
+	m.mu.Unlock()
 
 	for range maxDeployHistory {
 		m.record("site", "alice", "update")
 	}
-	_, _, got, deploys := m.stats("site")
+
+	reopened, err := newMetaStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, got, deploys := reopened.stats("site")
 	if got != createdAt {
 		t.Fatalf("creation time changed after history trimming: got %q, want %q", got, createdAt)
 	}
