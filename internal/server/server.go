@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sdelcore/shared/internal/store"
+	"github.com/sdelcore/shared/internal/web"
 )
 
 type Server struct {
@@ -78,6 +79,10 @@ func (s *Server) ListenAndServe() error {
 			s.api.ServeHTTP(w, r)
 		case r.URL.Path == "/shared.js":
 			s.handleSharedJS(w, r)
+		case r.URL.Path == "/favicon.svg" && siteFromHost(r.Host, s.BaseHost) == "":
+			w.Header().Set("Content-Type", "image/svg+xml")
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			w.Write(web.FaviconSVG)
 		// Base host only: on a site host this path belongs to the site, and
 		// intercepting it would shadow a deployed file of the same name.
 		case r.URL.Path == "/skill.md" && siteFromHost(r.Host, s.BaseHost) == "":

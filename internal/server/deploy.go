@@ -419,9 +419,11 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 			"updatedAt": updatedAt,
 			"bytes":     s.siteBytes(e.Name()),
 		}
-		views, current, deploys := s.meta.stats(e.Name())
+		views, current, createdAt, deploys := s.meta.stats(e.Name())
 		entry["views"] = views.Total
 		if current != nil {
+			entry["createdAt"] = createdAt
+			entry["updatedAt"] = current.Time
 			entry["deployer"] = current.Deployer
 			entry["deploys"] = deploys
 		}
