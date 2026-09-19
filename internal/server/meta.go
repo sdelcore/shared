@@ -31,8 +31,9 @@ type viewStats struct {
 }
 
 type siteMeta struct {
-	Deploys []deployRecord `json:"deploys"`
-	Views   viewStats      `json:"views"`
+	CreatedAt string         `json:"createdAt,omitempty"`
+	Deploys   []deployRecord `json:"deploys"`
+	Views     viewStats      `json:"views"`
 }
 
 type pendingViews struct {
@@ -83,6 +84,12 @@ func (m *metaStore) load(site string) *siteMeta {
 		log.Printf("meta: could not read %s: %v", m.path(site), err)
 	}
 	m.cache[site] = sm
+	if sm.CreatedAt == "" && len(sm.Deploys) > 0 {
+		// Legacy metadata did not persist creation separately. Preserve the
+		// oldest timestamp still available rather than letting it advance again.
+		sm.CreatedAt = sm.Deploys[0].Time
+		m.persist(site)
+	}
 	return sm
 }
 
@@ -131,13 +138,17 @@ func (m *metaStore) record(site, deployer, source string) int64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	sm := m.load(site)
+	now := time.Now().UTC().Format(time.RFC3339)
 	seq := int64(1)
 	if n := len(sm.Deploys); n > 0 {
 		seq = sm.Deploys[n-1].Seq + 1
 	}
+	if sm.CreatedAt == "" {
+		sm.CreatedAt = now
+	}
 	sm.Deploys = append(sm.Deploys, deployRecord{
 		Seq:      seq,
-		Time:     time.Now().UTC().Format(time.RFC3339),
+		Time:     now,
 		Deployer: deployer,
 		Source:   source,
 	})
@@ -148,7 +159,7 @@ func (m *metaStore) record(site, deployer, source string) int64 {
 	return seq
 }
 
-func (m *metaStore) stats(site string) (views viewStats, current *deployRecord, deploys int64) {
+func (m *metaStore) stats(site string) (views viewStats, current *deployRecord, createdAt string, deploys int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	sm := m.load(site)
@@ -156,12 +167,13 @@ func (m *metaStore) stats(site string) (views viewStats, current *deployRecord, 
 	if p := m.views[site]; p != nil {
 		views.Total += p.count
 	}
+	createdAt = sm.CreatedAt
 	if n := len(sm.Deploys); n > 0 {
 		rec := sm.Deploys[n-1]
 		current = &rec
 		deploys = rec.Seq
 	}
-	return views, current, deploys
+	return views, current, createdAt, deploys
 }
 
 func (m *metaStore) drop(site string) {

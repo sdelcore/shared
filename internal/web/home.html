@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>shared</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   :root {
     --paper: #f4f1ea;
@@ -50,6 +51,19 @@
   }
   h2::before { content: "§ "; color: var(--faint); }
 
+  .site-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
+  .site-heading h2 { margin-bottom: 0; }
+  .controls { display: flex; gap: .65rem; flex-wrap: wrap; }
+  .controls input, .controls select {
+    border: 1px solid var(--rule);
+    border-radius: 0;
+    background: transparent;
+    color: var(--ink);
+    font: .75rem ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    padding: .55rem .65rem;
+  }
+  .controls input { width: 13rem; }
+  .controls input:focus, .controls select:focus { outline: 2px solid var(--rust); outline-offset: 1px; }
   .sites { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
   .cell { position: relative; background: var(--paper); }
   .del {
@@ -87,6 +101,11 @@
     font-size: .72rem;
     color: var(--faint);
   }
+  .site .byline {
+    margin-top: .65rem;
+    font-size: .78rem;
+    color: var(--rust);
+  }
 
   .empty {
     border: 1px dashed var(--rule);
@@ -116,6 +135,15 @@
     padding: .1em .35em;
   }
   .note { margin-top: 1rem; font-size: .95rem; color: var(--faint); max-width: 60ch; }
+  .skill-link { color: var(--rust); text-underline-offset: .18em; }
+  .skill-link:hover { color: var(--ink); }
+
+  @media (max-width: 620px) {
+    .site-heading { align-items: stretch; flex-direction: column; }
+    .controls { display: grid; grid-template-columns: 1fr; }
+    .controls input { width: 100%; }
+    .del { opacity: 1; }
+  }
 
   footer {
     margin-top: 4rem;
@@ -136,7 +164,18 @@
   </header>
 
   <section>
-    <h2>Sites</h2>
+    <div class="site-heading">
+      <h2>Sites</h2>
+      <div class="controls">
+        <input id="site-filter" type="search" placeholder="Filter sites or creators" aria-label="Filter sites or creators">
+        <select id="site-sort" aria-label="Sort sites">
+          <option value="updated">Recently updated</option>
+          <option value="created">Recently created</option>
+          <option value="name">Name</option>
+          <option value="views">Most viewed</option>
+        </select>
+      </div>
+    </div>
     <div id="sites"><div class="empty">Consulting the index…</div></div>
   </section>
 
@@ -153,6 +192,7 @@ shared deploy ./mysite --name mysite
         Every site can include <code class="inline">&lt;script src="/shared.js"&gt;&lt;/script&gt;</code>
         to get the <code class="inline">shared</code> API for free: a document database with realtime
         subscriptions, an AI chat proxy, file uploads, websocket channels, and identity.
+        <a class="skill-link" href="/skill.md" download="shared-sites-SKILL.md">Download the agent skill →</a>
       </p>
     </div>
   </section>
@@ -164,6 +204,9 @@ shared deploy ./mysite --name mysite
 (function () {
   const host = location.hostname;
   const port = location.port ? ':' + location.port : '';
+  const filter = document.getElementById('site-filter');
+  const sort = document.getElementById('site-sort');
+  let allSites = [];
 
   document.getElementById('example-url').textContent =
     'http://mysite.' + host + port + '/';
@@ -180,10 +223,12 @@ shared deploy ./mysite --name mysite
     return n.toFixed(1) + ' ' + units[i];
   }
 
-  function render(sites) {
+  function render(sites, filtered) {
     const root = document.getElementById('sites');
     if (!sites.length) {
-      root.innerHTML = '<div class="empty">Nothing here yet. Your first deploy is one command away — see below.</div>';
+      root.innerHTML = '<div class="empty">' + (filtered
+        ? 'No sites match that filter.'
+        : 'Nothing here yet. Your first deploy is one command away — see below.') + '</div>';
       return;
     }
     const grid = document.createElement('div');
@@ -208,6 +253,12 @@ shared deploy ./mysite --name mysite
       }
       meta.textContent = parts.join(' · ');
       a.append(name, meta);
+      if (site.deployer) {
+        const byline = document.createElement('div');
+        byline.className = 'byline';
+        byline.textContent = 'by ' + site.deployer;
+        a.append(byline);
+      }
       const del = document.createElement('button');
       del.className = 'del';
       del.type = 'button';
@@ -219,7 +270,8 @@ shared deploy ./mysite --name mysite
           .then(function (res) {
             if (!res.ok) throw new Error('delete failed (' + res.status + ')');
             cell.remove();
-            if (!grid.children.length) render([]);
+            allSites = allSites.filter(function (item) { return item.name !== site.name; });
+            update();
           })
           .catch(function (err) { alert(err.message); });
       });
@@ -229,12 +281,33 @@ shared deploy ./mysite --name mysite
     root.replaceChildren(grid);
   }
 
+  function update() {
+    const query = filter.value.trim().toLocaleLowerCase();
+    const sites = allSites.filter(function (site) {
+      return !query || site.name.toLocaleLowerCase().includes(query) ||
+        (site.deployer || '').toLocaleLowerCase().includes(query);
+    });
+    sites.sort(function (a, b) {
+      if (sort.value === 'name') return a.name.localeCompare(b.name);
+      if (sort.value === 'views') return (b.views || 0) - (a.views || 0) || a.name.localeCompare(b.name);
+      const field = sort.value === 'created' ? 'createdAt' : 'updatedAt';
+      return Date.parse(b[field] || 0) - Date.parse(a[field] || 0) || a.name.localeCompare(b.name);
+    });
+    render(sites, Boolean(query));
+  }
+
+  filter.addEventListener('input', update);
+  sort.addEventListener('change', update);
+
   fetch('/api/sites')
     .then(function (res) {
       if (!res.ok) throw new Error('sites request failed (' + res.status + ')');
       return res.json();
     })
-    .then(function (body) { render(body.sites || []); })
+    .then(function (body) {
+      allSites = body.sites || [];
+      update();
+    })
     .catch(function (err) {
       document.getElementById('sites').innerHTML =
         '<div class="empty error">Could not load sites: ' + err.message + '</div>';
