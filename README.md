@@ -1,9 +1,10 @@
 # shared
 
-One small Go server that hosts many static sites with subdomain routing, an
-rsync-style deploy flow, and a batteries-included client-side JS API — a document
-DB with realtime subscriptions, an AI chat proxy, file uploads, websocket
-channels, and identity. Drop a `<script src="/shared.js">` into any page and go.
+One small Go server that hosts many static sites — subdomain per site, or path
+per site when the host cannot do wildcard names — an rsync-style deploy flow, and
+a batteries-included client-side JS API — a document DB with realtime
+subscriptions, an AI chat proxy, file uploads, websocket channels, and identity.
+Drop a `<script src="/shared.js">` into any page and go.
 
 **No auth. Single user, trusted network only.** Anyone who can reach the port
 can read and write everything. Run it on your LAN or behind a VPN, not the
@@ -198,7 +199,30 @@ built-in copy when the server is unreachable. The reason: an agent then reads
 the skill for the server it is deploying to, not the one the CLI was built
 from.
 
-## Subdomain routing
+## URL schemes
+
+A site is addressed one of two ways, chosen for the whole server:
+
+| Mode | Site URL | Use when |
+| --- | --- | --- |
+| `subdomain` (default) | `http://<name>.<base-host><port>/` | you control wildcard DNS and a wildcard certificate |
+| `path` | `http://<base-host><port><prefix>/<name>/` | you do not: a Tailscale machine name, an IP address, a proxy that routes on the path, a domain one level deep |
+
+```sh
+SHARED_URL_MODE=path SHARED_PATH_PREFIX=/s sharedd   # http://host:8787/s/hello/
+SHARED_URL_MODE=subdomain sharedd                    # http://hello.host:8787/ (default)
+```
+
+Everything else follows the mode without configuration: `shared deploy` and
+`shared rollback` print the site's real URL, `/api/sites` carries a `url` per
+site, `shared open` reads that URL back from the server, the home page links each
+site at its own address, upload URLs come back under the right prefix, and the
+skill served at `/skill.md` says which scheme the server uses. A page's markup is
+the same either way — the SDK resolves the site from the page's own address, so
+`<script src="/shared.js"></script>` and every `/api/...` call land on the right
+site.
+
+### Subdomain routing
 
 Each site lives at `http://<name>.<base-host><port>/`. Modern browsers resolve
 any `*.localhost` name to `127.0.0.1` without `/etc/hosts` entries, so
@@ -206,10 +230,11 @@ any `*.localhost` name to `127.0.0.1` without `/etc/hosts` entries, so
 domain on your LAN, set `SHARED_BASE_HOST` (e.g. `shared.lan`) and point a
 wildcard DNS record at the box.
 
-Per-site data endpoints (db, uploads, ws) scope strictly to the first label of
-the request's `Host` header — one site cannot reach another site's data, even
-from a visitor's browser. The deploy endpoint takes its target from `?site=`.
-Site names must match `^[a-z0-9][a-z0-9-]{0,62}$`.
+Per-site data endpoints (db, uploads, ws) scope strictly to the requesting site —
+the first label of the `Host` header in subdomain mode, the segment under the path
+prefix in path mode — so one site cannot reach another site's data, even from a
+visitor's browser. The deploy endpoint takes its target from `?site=`. Site names
+must match `^[a-z0-9][a-z0-9-]{0,62}$`.
 
 ## Client API
 
@@ -330,8 +355,10 @@ derived from `SHARED_USER` (or `$USER`).
 | `GET` | `/api/identity` | `{"email","name"}` |
 | `GET` | `/api/ws?channel=C` | WebSocket broadcast channel |
 
-Per-site endpoints (db, uploads, ws) take the site from the request's
-subdomain.
+Per-site endpoints (db, uploads, ws) take the site from the request's subdomain,
+or from the segment under the path prefix in path mode (`/s/<site>/api/...`). The
+platform endpoints (deploy, sites, versions, rollback, export, skills) stay at the
+root and name their site explicitly.
 
 ## Environment variables
 
@@ -339,7 +366,9 @@ subdomain.
 |---|---|---|
 | `SHARED_ADDR` | `:8787` | Listen address |
 | `SHARED_DATA` | `./data` | Data directory |
-| `SHARED_BASE_HOST` | `localhost` | Base host for subdomain routing |
+| `SHARED_BASE_HOST` | `localhost` | Base host for both URL schemes |
+| `SHARED_URL_MODE` | `subdomain` | `subdomain` (per-site host) or `path` (per-site path prefix) |
+| `SHARED_PATH_PREFIX` | `/s` | Prefix for path mode; sites live at `<prefix>/<site>/` |
 | `SHARED_KEEP_VERSIONS` | `3` | Prior deploys to keep per site for rollback; `0` disables versioning |
 | `OPENAI_BASE_URL` | — | OpenAI-compatible base URL (e.g. `http://llm.tools.tap/v1`); enables `/api/ai/chat` |
 | `OPENAI_API_KEY` | — | API key/token for the above (e.g. LiteLLM master key) |

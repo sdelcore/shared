@@ -155,6 +155,7 @@
     letter-spacing: .08em;
   }
 </style>
+<!--__SHARED_URL_CONFIG__-->
 </head>
 <body>
 <div class="wrap">
@@ -202,17 +203,25 @@ shared deploy ./mysite --name mysite
 
 <script>
 (function () {
+  // The server injects the URL mode it is running in, above this script.
+  const SHARED_URL = window.__sharedURL || { mode: 'subdomain', prefix: '' };
   const host = location.hostname;
   const port = location.port ? ':' + location.port : '';
+  const prefix = SHARED_URL.mode === 'path' ? SHARED_URL.prefix : '';
   const filter = document.getElementById('site-filter');
   const sort = document.getElementById('site-sort');
   let allSites = [];
 
-  document.getElementById('example-url').textContent =
-    'http://mysite.' + host + port + '/';
+  document.getElementById('example-url').textContent = SHARED_URL.mode === 'path'
+    ? location.protocol + '//' + location.host + prefix + '/mysite/'
+    : location.protocol + '//mysite.' + host + port + '/';
 
-  function siteURL(name) {
-    return location.protocol + '//' + name + '.' + host + port + '/';
+  function siteURL(site) {
+    if (site.url) return site.url;   // the server states each site's live URL
+    if (SHARED_URL.mode === 'path') {
+      return location.protocol + '//' + location.host + prefix + '/' + site.name + '/';
+    }
+    return location.protocol + '//' + site.name + '.' + host + port + '/';
   }
 
   function humanSize(n) {
@@ -238,7 +247,7 @@ shared deploy ./mysite --name mysite
       cell.className = 'cell';
       const a = document.createElement('a');
       a.className = 'site';
-      a.href = siteURL(site.name);
+      a.href = siteURL(site);
       const name = document.createElement('div');
       name.className = 'name';
       name.textContent = site.name;

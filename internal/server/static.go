@@ -19,6 +19,14 @@ func validSite(name string) bool {
 }
 
 func (s *Server) siteFromRequest(r *http.Request) string {
+	// Path mode resolves the site in the router and pins it on the request;
+	// subdomain mode reads it from the host name.
+	if site, ok := r.Context().Value(siteContextKey{}).(string); ok && site != "" {
+		return site
+	}
+	if s.URLMode == URLModePath {
+		return ""
+	}
 	return siteFromHost(r.Host, s.BaseHost)
 }
 
@@ -52,11 +60,10 @@ const notDeployedHTML = `<!doctype html>
 `
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
-	site := siteFromHost(r.Host, s.BaseHost)
+	site := s.siteFromRequest(r)
 	if site == "" {
 		if r.URL.Path == "/" {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Write([]byte(web.HomeHTML))
+			s.writeHome(w)
 			return
 		}
 		writeErr(w, http.StatusNotFound, "not found")
@@ -109,8 +116,11 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, target, info.ModTime(), f)
 }
 
+// handleSharedJS serves the client SDK with the live URL mode injected, so a
+// page written once works under either scheme: in path mode the SDK resolves
+// the site from the page's own path prefix, in subdomain mode from the host.
 func (s *Server) handleSharedJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write([]byte(web.SharedJS))
+	w.Write(s.injectURLConfig(web.SharedJS, false))
 }

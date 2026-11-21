@@ -80,12 +80,25 @@ func (s *Server) saveUpload(site, name string, src io.Reader) (string, error) {
 	if _, err := io.Copy(dst, src); err != nil {
 		return "", err
 	}
+	// The public URL follows the server's URL scheme: in path mode the site is
+	// already in the prefix, so the URL must not repeat it.
+	if s.URLMode == URLModePath {
+		return s.PathPrefix + "/" + site + "/uploads/" + stored, nil
+	}
 	return "/uploads/" + site + "/" + stored, nil
 }
 
 func (s *Server) handleServeUpload(w http.ResponseWriter, r *http.Request) {
 	rel := strings.TrimPrefix(r.URL.Path, "/uploads/")
-	root, err := filepath.Abs(filepath.Join(s.DataDir, "uploads"))
+	// In path mode the site arrived in the URL prefix, so the remainder is just
+	// the file name; in subdomain mode the upload URL repeats the site.
+	parts := []string{s.DataDir, "uploads"}
+	if s.URLMode == URLModePath {
+		if site := s.siteFromRequest(r); site != "" {
+			parts = append(parts, site)
+		}
+	}
+	root, err := filepath.Abs(filepath.Join(parts...))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return

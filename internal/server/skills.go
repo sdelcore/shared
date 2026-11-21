@@ -33,6 +33,12 @@ func (s *Server) writeSkill(w http.ResponseWriter, name string) {
 		writeErr(w, http.StatusNotFound, "skill not found")
 		return
 	}
+	// The skill is generated per server: the URL scheme is deployment
+	// configuration, and an agent reading it here must not guess subdomains on
+	// a server that routes on the path.
+	if name == skills.SharedSites {
+		body = append(body, []byte(s.urlFormatSection())...)
+	}
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Write(body)
