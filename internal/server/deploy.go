@@ -391,12 +391,25 @@ func extractTarball(r io.Reader, root string) error {
 	}
 }
 
+// siteURL is the live address of a site, in whichever scheme the server runs.
+// It is the only place that composes a site URL, so deploy, rollback, the sites
+// listing and the CLI all state the same thing.
 func (s *Server) siteURL(site string) string {
-	host := site + "." + s.BaseHost
-	if _, port, err := net.SplitHostPort(s.Addr); err == nil && port != "" && port != "80" {
+	port := ""
+	if _, p, err := net.SplitHostPort(s.Addr); err == nil && p != "" && p != "80" {
+		port = p
+	}
+	host := s.BaseHost
+	if port != "" {
 		host = net.JoinHostPort(host, port)
 	}
-	return "http://" + host + "/"
+	if s.URLMode == URLModePath {
+		return "http://" + host + s.PathPrefix + "/" + site + "/"
+	}
+	if port != "" {
+		return "http://" + site + "." + s.BaseHost + ":" + port + "/"
+	}
+	return "http://" + site + "." + s.BaseHost + "/"
 }
 
 func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
@@ -418,6 +431,7 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 			"name":      e.Name(),
 			"updatedAt": updatedAt,
 			"bytes":     s.siteBytes(e.Name()),
+			"url":       s.siteURL(e.Name()),
 		}
 		views, current, createdAt, deploys := s.meta.stats(e.Name())
 		entry["views"] = views.Total

@@ -6,9 +6,16 @@ description: Building and deploying static sites/apps on the self-hosted shared 
 # shared-sites
 
 Build a site as plain static files (an `index.html` plus whatever assets), add
-`<script src="/shared.js"></script>`, and deploy the directory. The server hosts
-each site at its own subdomain and gives every page a client API scoped to that
-site automatically. There is no build step and no backend to write.
+`<script src="/shared.js"></script>`, and deploy the directory. The server gives
+every page a client API scoped to its own site automatically. There is no build
+step and no backend to write.
+
+Sites are addressed either as `http://<site>.<base-host>/` (subdomain mode) or as
+`http://<base-host><prefix>/<site>/` (path mode, for hosts that only route on the
+path — a Tailscale machine name, an IP, a proxy on one domain). The copy of this
+skill served by a running server states which one it uses in its last section,
+and `shared deploy` prints the exact URL: read one of those instead of composing
+an address.
 
 **No auth.** Single user, trusted LAN only. Anyone who can reach the server can
 read and write every site's data. Do not expose it to the open internet, and do
@@ -16,7 +23,10 @@ not put secrets in site data.
 
 ## Client API (`/shared.js` → `window.shared`)
 
-All calls are promise-based and scoped to the current site by its subdomain.
+All calls are promise-based and scoped to the current site — by the host name in
+subdomain mode, by the URL path in path mode. Page markup is identical either
+way: `/shared.js` resolves the site itself, so `/api/...` reaches the right site
+without the page knowing which scheme is in use.
 
 The served `/shared.js` is the source of truth for signatures, and it moves
 ahead of this file. Run `curl $SHARED_SERVER/shared.js` and read the function
@@ -141,7 +151,8 @@ guarded against overwriting someone else's deploy: if the site changed since
 your last deploy, the CLI asks before overwriting. Non-interactive runs get
 "deploy cancelled" — re-run with `--force` if overwriting is intended.
 
-Data is scoped strictly by the first label of the request Host, so one site
+Data is scoped strictly to the requesting site — the first label of the Host in
+subdomain mode, the segment under the path prefix in path mode — so one site
 cannot reach another's db/uploads/ws. Site names must match
 `^[a-z0-9][a-z0-9-]{0,62}$`.
 
@@ -166,7 +177,9 @@ current as a new version, so it is reversible.
 - Build the whole feature client-side; there is no server code to add.
 - Use `subscribe` for live UIs instead of polling.
 - Smoke-test a platform call against the real server before blaming the site:
-  `curl -X POST http://mysite.<base-host>/api/db/<collection> -H 'Content-Type:
-  application/json' -d '{}'`, and the same for `/api/ai/chat`.
+  append `/api/db/<collection>` to the URL `shared deploy` printed and POST to it
+  (`curl -X POST <site-url>api/db/<collection> -H 'Content-Type:
+  application/json' -d '{}'`), and the same for `/api/ai/chat`.
 - This file is served by the running server at `/skill.md`. Fetch it from there
-  to match the deployed version: `curl $SHARED_SERVER/skill.md`.
+  to match the deployed version: `curl $SHARED_SERVER/skill.md`. Its final
+  section names the URL scheme that server actually uses.

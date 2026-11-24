@@ -2,8 +2,31 @@
 (function () {
   'use strict';
 
+  // The server replaces the marker below with the URL mode it is running in:
+  // subdomain mode names the site in the host, path mode puts it in the path
+  // under a prefix. Everything here is built on BASE, so a page written once
+  // works under either scheme with no change to its markup.
+  var SHARED_URL = { mode: 'subdomain', prefix: '' };
+  /*__SHARED_URL_CONFIG__*/
+
+  // basePath is the site's own prefix in path mode ('' in subdomain mode).
+  // In path mode the page's own path is <prefix>/<site>/..., so the site is the
+  // segment after the prefix and every API call belongs under it.
+  function basePath() {
+    if (SHARED_URL.mode !== 'path') return '';
+    var segs = location.pathname.split('/').filter(function (s) { return s !== ''; });
+    var pre = SHARED_URL.prefix.split('/').filter(function (s) { return s !== ''; });
+    if (segs.length <= pre.length) return '';
+    for (var i = 0; i < pre.length; i++) {
+      if (segs[i] !== pre[i]) return '';
+    }
+    return '/' + segs.slice(0, pre.length + 1).join('/');
+  }
+
+  var BASE = basePath();
+
   async function request(path, options) {
-    const res = await fetch(path, options);
+    const res = await fetch(BASE + path, options);
     if (!res.ok) {
       let msg = res.status + ' ' + res.statusText;
       try {
@@ -26,7 +49,7 @@
 
   function wsURL(path) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return proto + '//' + location.host + path;
+    return proto + '//' + location.host + BASE + path;
   }
 
   function reconnectingSocket(url, onMessage, onOpen) {
@@ -154,7 +177,7 @@
   };
 
   async function streamChat(body, onToken) {
-    const res = await fetch('/api/ai/chat', {
+    const res = await fetch(BASE + '/api/ai/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

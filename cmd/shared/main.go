@@ -424,6 +424,39 @@ func cmdList(args []string) {
 	}
 }
 
+// siteURLFromServer reads the live URL of one site from the server's own
+// listing, so the CLI never has to know whether the server uses subdomains or
+// path routing.
+func siteURLFromServer(server, name string) (string, bool) {
+	resp, err := http.Get(strings.TrimRight(server, "/") + "/api/sites")
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return "", false
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", false
+	}
+	var out struct {
+		Sites []struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"sites"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", false
+	}
+	for _, site := range out.Sites {
+		if site.Name == name && site.URL != "" {
+			return site.URL, true
+		}
+	}
+	return "", false
+}
+
 func cmdOpen(args []string) {
 	fs := flag.NewFlagSet("open", flag.ExitOnError)
 	server := fs.String("server", defaultServer(), "shared server URL")
@@ -436,17 +469,23 @@ func cmdOpen(args []string) {
 	name := fs.Arg(0)
 	fs.Parse(fs.Args()[1:])
 
-	u, err := url.Parse(*server)
-	if err != nil || u.Host == "" {
-		fatal("invalid server URL %q", *server)
+	// Ask the server for the site's URL: it depends on the URL mode the server
+	// runs in (subdomain or path), and the local guess is only a fallback for a
+	// server that does not report it.
+	siteURL, ok := siteURLFromServer(*server, name)
+	if !ok {
+		u, err := url.Parse(*server)
+		if err != nil || u.Host == "" {
+			fatal("invalid server URL %q", *server)
+		}
+		host := u.Host
+		if h, p, err := net.SplitHostPort(u.Host); err == nil {
+			host = net.JoinHostPort(name+"."+h, p)
+		} else {
+			host = name + "." + host
+		}
+		siteURL = u.Scheme + "://" + host + "/"
 	}
-	host := u.Host
-	if h, p, err := net.SplitHostPort(u.Host); err == nil {
-		host = net.JoinHostPort(name+"."+h, p)
-	} else {
-		host = name + "." + host
-	}
-	siteURL := u.Scheme + "://" + host + "/"
 	fmt.Println(siteURL)
 	switch runtime.GOOS {
 	case "windows":
