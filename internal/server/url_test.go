@@ -15,9 +15,23 @@ import (
 // non-default port is.
 func testServer(t *testing.T, mode, prefix string) *Server {
 	t.Helper()
-	s, err := New("127.0.0.1:8787", t.TempDir(), "shared.tap", 3, mode, prefix)
+	return testServerWithPublicURL(t, mode, prefix, "")
+}
+
+// testServerWithPublicURL is testServer with a configured SHARED_PUBLIC_URL, for
+// the same listen address: a proxy terminates https on 443 and forwards to
+// 127.0.0.1:8787, so every stated URL has to come from the public URL instead.
+func testServerWithPublicURL(t *testing.T, mode, prefix, publicURL string) *Server {
+	t.Helper()
+	// With a public URL the base host follows it (server.New enforces that the
+	// two agree), so leave it for New to derive.
+	baseHost := "shared.tap"
+	if publicURL != "" {
+		baseHost = ""
+	}
+	s, err := New("127.0.0.1:8787", t.TempDir(), baseHost, 3, mode, prefix, publicURL)
 	if err != nil {
-		t.Fatalf("New(%q, %q): %v", mode, prefix, err)
+		t.Fatalf("New(%q, %q, %q): %v", mode, prefix, publicURL, err)
 	}
 	dir := filepath.Join(s.DataDir, "sites", "notes")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -187,6 +201,110 @@ func TestSiteURLFollowsTheMode(t *testing.T) {
 	}
 }
 
+// A public URL replaces the scheme and port of the listen address, because the
+// proxy is what clients actually reach.
+func TestSiteURLUsesThePublicURL(t *testing.T) {
+	path := testServerWithPublicURL(t, URLModePath, "", "https://h.example")
+	if got, want := path.siteURL("notes"), "https://h.example/s/notes/"; got != want {
+		t.Fatalf("path URL behind a proxy = %q, want %q", got, want)
+	}
+	sub := testServerWithPublicURL(t, URLModeSubdomain, "", "https://h.example")
+	if got, want := sub.siteURL("notes"), "https://notes.h.example/"; got != want {
+		t.Fatalf("subdomain URL behind a proxy = %q, want %q", got, want)
+	}
+	// A prefix and an explicit public port both survive.
+	prefixed := testServerWithPublicURL(t, URLModePath, "/sites", "https://h.example:8443")
+	if got, want := prefixed.siteURL("notes"), "https://h.example:8443/sites/notes/"; got != want {
+		t.Fatalf("prefixed path URL = %q, want %q", got, want)
+	}
+	// Plain http on a public host is allowed too, and the listen port stays out
+	// of the URL either way.
+	plain := testServerWithPublicURL(t, URLModeSubdomain, "", "http://h.example")
+	if got, want := plain.siteURL("notes"), "http://notes.h.example/"; got != want {
+		t.Fatalf("http public URL = %q, want %q", got, want)
+	}
+}
+
+func TestPublicURLCarriage(t *testing.T) {
+	s := testServerWithPublicURL(t, URLModePath, "", "https://h.example")
+	// The sites listing is what `shared open` reads, so the deploy output and
+	// the listing have to agree.
+	rr := serve(s, "GET", "/api/sites", "h.example")
+	var body struct {
+		Sites []struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"sites"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("sites body %q: %v", rr.Body.String(), err)
+	}
+	for _, site := range body.Sites {
+		if site.Name == "notes" && site.URL != "https://h.example/s/notes/" {
+			t.Fatalf("listed URL = %q, want the public URL", site.URL)
+		}
+	}
+	// The skill an agent reads states the public URL, so it does not compose
+	// http://<listen address> URLs against a proxy.
+	rr = serve(s, "GET", "/skill.md", "h.example")
+	body2 := rr.Body.String()
+	for _, want := range []string{"This server is published at `https://h.example`", "https://h.example/s/<site-name>/"} {
+		if !strings.Contains(body2, want) {
+			t.Fatalf("skill.md lacks %q", want)
+		}
+	}
+}
+
+func TestNormalizePublicURL(t *testing.T) {
+	ok := map[string]string{
+		"":                            "",
+		"  ":                          "",
+		"https://h.example":           "https://h.example",
+		"https://h.example/":          "https://h.example",
+		"HTTPS://H.Example":           "https://h.example",
+		"http://h.example:8080":       "http://h.example:8080",
+		"https://h.example:8443/":     "https://h.example:8443",
+		"https://host.example.ts.net": "https://host.example.ts.net",
+	}
+	for in, want := range ok {
+		got, err := normalizePublicURL(in)
+		if err != nil || got != want {
+			t.Fatalf("normalizePublicURL(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{
+		"h.example",             // no scheme
+		"ftp://h.example",       // wrong scheme
+		"https://",              // no host
+		"https://h.example/s",   // a path already means something
+		"https://h.example?x=1", // query
+		"https://h.example#top", // fragment
+		"https://user:pw@h.example",
+		"https://h.example:notaport",
+	} {
+		if got, err := normalizePublicURL(in); err == nil {
+			t.Fatalf("normalizePublicURL(%q) = %q, want an error", in, got)
+		}
+	}
+}
+
+func TestBaseHostComesFromThePublicURL(t *testing.T) {
+	// With no SHARED_BASE_HOST the public host is the base host, so subdomain
+	// routing and stated URLs use the same name.
+	s, err := New("127.0.0.1:8787", t.TempDir(), "", 3, URLModeSubdomain, "", "https://h.example")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if s.BaseHost != "h.example" {
+		t.Fatalf("BaseHost = %q, want the public host", s.BaseHost)
+	}
+	// A base host that disagrees with the public host is a configuration error,
+	// not something to guess about.
+	if _, err := New("127.0.0.1:8787", t.TempDir(), "shared.tap", 3, URLModePath, "", "https://h.example"); err == nil {
+		t.Fatal("New accepted a base host that does not match the public URL host")
+	}
+}
+
 func TestSitesListingCarriesTheURL(t *testing.T) {
 	s := testServer(t, URLModePath, "")
 	rr := serve(s, "GET", "/api/sites", "shared.tap")
@@ -289,7 +407,7 @@ func TestNormalizeURLMode(t *testing.T) {
 	if _, err := normalizeURLMode("subdomainish"); err == nil {
 		t.Fatal("normalizeURLMode accepted an unknown mode")
 	}
-	if _, err := New("127.0.0.1:8787", t.TempDir(), "shared.tap", 3, "bogus", ""); err == nil {
+	if _, err := New("127.0.0.1:8787", t.TempDir(), "shared.tap", 3, "bogus", "", ""); err == nil {
 		t.Fatal("New accepted an unknown URL mode")
 	}
 }

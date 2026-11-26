@@ -222,6 +222,39 @@ the same either way — the SDK resolves the site from the page's own address, s
 `<script src="/shared.js"></script>` and every `/api/...` call land on the right
 site.
 
+### Behind a reverse proxy / tailscale serve
+
+`sharedd` serves plain HTTP on a listen address. Put a TLS proxy in front of it
+and the listen address stops describing how clients reach the server, so tell it
+the origin that they actually use:
+
+```sh
+SHARED_ADDR=127.0.0.1:8787 \
+SHARED_URL_MODE=path \
+SHARED_PUBLIC_URL=https://host.example.ts.net \
+  sharedd
+```
+
+Set `SHARED_BASE_HOST` to the same host (`host.example.ts.net`); when it is unset
+it defaults to the public URL's host, and a value that disagrees with it is a
+startup error rather than a silently wrong URL. With that running, a deploy of
+`hello` prints `https://host.example.ts.net/s/hello/`, `/api/sites` states the
+same URL, `shared open hello` opens it, and `/skill.md` names it.
+
+The value is scheme plus host[:port] only — no path, query or fragment; a single
+trailing slash is accepted and dropped. The scheme is `https` or `http`, the port
+is optional (leave it off for 443), and the listen port no longer appears in any
+stated URL. Unset, every URL is exactly what the listen address implies.
+
+Behind Tailscale, a serve rule to loopback is all the proxy you need:
+
+```sh
+tailscale serve --bg --https=443 http://127.0.0.1:8787
+```
+
+The proxy must pass the original `Host` header through: in subdomain mode the
+site is read from it, and path mode routes on the path regardless.
+
 ### Subdomain routing
 
 Each site lives at `http://<name>.<base-host><port>/`. Modern browsers resolve
@@ -369,6 +402,7 @@ root and name their site explicitly.
 | `SHARED_BASE_HOST` | `localhost` | Base host for both URL schemes |
 | `SHARED_URL_MODE` | `subdomain` | `subdomain` (per-site host) or `path` (per-site path prefix) |
 | `SHARED_PATH_PREFIX` | `/s` | Prefix for path mode; sites live at `<prefix>/<site>/` |
+| `SHARED_PUBLIC_URL` | — | Origin clients use when a TLS proxy fronts sharedd, e.g. `https://host.example.ts.net`; scheme + host[:port], no path. Must match `SHARED_BASE_HOST` |
 | `SHARED_KEEP_VERSIONS` | `3` | Prior deploys to keep per site for rollback; `0` disables versioning |
 | `OPENAI_BASE_URL` | — | OpenAI-compatible base URL (e.g. `http://llm.tools.tap/v1`); enables `/api/ai/chat` |
 | `OPENAI_API_KEY` | — | API key/token for the above (e.g. LiteLLM master key) |

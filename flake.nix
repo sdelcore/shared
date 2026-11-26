@@ -48,6 +48,36 @@
               description = "Base host for subdomain routing; sites live at <name>.<baseHost>.";
             };
 
+            urlMode = lib.mkOption {
+              type = lib.types.enum [ "subdomain" "path" ];
+              default = "subdomain";
+              description = ''
+                How sites are addressed: `subdomain` gives each site its own host
+                (`<name>.<baseHost>`), `path` puts every site under one prefix
+                (`<baseHost><pathPrefix>/<name>/`) for hosts without wildcard DNS.
+              '';
+            };
+
+            pathPrefix = lib.mkOption {
+              type = lib.types.str;
+              default = "/s";
+              example = "/sites";
+              description = "Path-mode prefix; sites live at <pathPrefix>/<name>/.";
+            };
+
+            publicUrl = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              example = "https://shared.example.com";
+              description = ''
+                Origin clients actually use, when a reverse proxy (e.g.
+                `tailscale serve`) terminates TLS in front of sharedd. Scheme and
+                host[:port] only, no path. Every URL the server states is built
+                from it instead of from the listen address. Its host must match
+                {option}`baseHost`.
+              '';
+            };
+
             aiModel = lib.mkOption {
               type = lib.types.str;
               default = "claude-opus-4-8";
@@ -79,7 +109,11 @@
                 SHARED_ADDR = ":${toString cfg.port}";
                 SHARED_DATA = "/var/lib/shared";
                 SHARED_BASE_HOST = cfg.baseHost;
+                SHARED_URL_MODE = cfg.urlMode;
+                SHARED_PATH_PREFIX = cfg.pathPrefix;
                 SHARED_AI_MODEL = cfg.aiModel;
+              } // lib.optionalAttrs (cfg.publicUrl != null) {
+                SHARED_PUBLIC_URL = cfg.publicUrl;
               };
 
               serviceConfig = {

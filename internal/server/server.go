@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,12 @@ type Server struct {
 	KeepVersions            int
 	URLMode                 string
 	PathPrefix              string
+	// PublicURL is the canonical "scheme://host[:port]" clients actually use,
+	// when the server runs behind a TLS proxy. Empty means the listen address
+	// describes itself, which is the default.
+	PublicURL string
+
+	publicScheme, publicAuthority string
 
 	store *store.Store
 	meta  *metaStore
@@ -24,7 +32,7 @@ type Server struct {
 	ai    *limiter
 }
 
-func New(addr, dataDir, baseHost string, keepVersions int, urlMode, pathPrefix string) (*Server, error) {
+func New(addr, dataDir, baseHost string, keepVersions int, urlMode, pathPrefix, publicURL string) (*Server, error) {
 	mode, err := normalizeURLMode(urlMode)
 	if err != nil {
 		return nil, err
@@ -32,6 +40,28 @@ func New(addr, dataDir, baseHost string, keepVersions int, urlMode, pathPrefix s
 	prefix, err := normalizePathPrefix(pathPrefix)
 	if err != nil {
 		return nil, err
+	}
+	public, err := normalizePublicURL(publicURL)
+	if err != nil {
+		return nil, err
+	}
+	publicScheme, publicAuthority := "", ""
+	if public != "" {
+		u, err := neturl.Parse(public)
+		if err != nil {
+			return nil, fmt.Errorf("invalid public URL %q: %v", public, err)
+		}
+		publicScheme, publicAuthority = u.Scheme, u.Host
+		// The host header a proxied request carries is the public host, and the
+		// site is read from it in subdomain mode, so the two cannot disagree.
+		if baseHost == "" {
+			baseHost = u.Hostname()
+		} else if !strings.EqualFold(baseHost, u.Hostname()) {
+			return nil, fmt.Errorf("SHARED_BASE_HOST %q does not match the public URL host %q; set them to the same host", baseHost, u.Hostname())
+		}
+	}
+	if baseHost == "" {
+		baseHost = "localhost"
 	}
 	for _, dir := range []string{filepath.Join(dataDir, "sites"), filepath.Join(dataDir, "uploads"), filepath.Join(dataDir, "versions")} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -47,17 +77,20 @@ func New(addr, dataDir, baseHost string, keepVersions int, urlMode, pathPrefix s
 		return nil, err
 	}
 	s := &Server{
-		Addr:         addr,
-		DataDir:      dataDir,
-		BaseHost:     baseHost,
-		KeepVersions: keepVersions,
-		URLMode:      mode,
-		PathPrefix:   prefix,
-		store:        st,
-		meta:         meta,
-		hub:          NewHub(),
-		api:          http.NewServeMux(),
-		ai:           newAILimiter(),
+		Addr:            addr,
+		DataDir:         dataDir,
+		BaseHost:        baseHost,
+		KeepVersions:    keepVersions,
+		URLMode:         mode,
+		PathPrefix:      prefix,
+		PublicURL:       public,
+		publicScheme:    publicScheme,
+		publicAuthority: publicAuthority,
+		store:           st,
+		meta:            meta,
+		hub:             NewHub(),
+		api:             http.NewServeMux(),
+		ai:              newAILimiter(),
 	}
 	s.sweep()
 

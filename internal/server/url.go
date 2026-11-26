@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -49,6 +51,43 @@ func normalizeURLMode(mode string) (string, error) {
 		return URLModePath, nil
 	}
 	return "", fmt.Errorf("invalid URL mode %q (want %q or %q)", mode, URLModeSubdomain, URLModePath)
+}
+
+// normalizePublicURL canonicalises SHARED_PUBLIC_URL to "scheme://host[:port]".
+// When a server sits behind a TLS proxy, the listen address stops describing
+// how clients reach it: the proxy terminates https on 443 and forwards to a
+// loopback port, so every URL the server states has to come from this instead.
+// An empty value means "no public URL configured", which keeps the listen
+// address as the source of truth.
+func normalizePublicURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid public URL %q: %v", raw, err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", fmt.Errorf("invalid public URL %q: scheme must be http or https", raw)
+	}
+	if u.Opaque != "" || u.User != nil || u.Host == "" || u.Hostname() == "" {
+		return "", fmt.Errorf("invalid public URL %q: want %s://host[:port]", raw, scheme)
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return "", fmt.Errorf("invalid public URL %q: no query or fragment", raw)
+	}
+	// A single trailing slash is the obvious way to write "https://h.example/",
+	// and it means the same thing, so accept it. Anything deeper is a path.
+	if p := strings.TrimSuffix(u.Path, "/"); p != "" {
+		return "", fmt.Errorf("invalid public URL %q: no path", raw)
+	}
+	authority := strings.ToLower(u.Hostname())
+	if port := u.Port(); port != "" {
+		authority = net.JoinHostPort(authority, port)
+	}
+	return scheme + "://" + authority, nil
 }
 
 // normalizePathPrefix canonicalises a configured prefix to the form the router
@@ -128,10 +167,22 @@ func (s *Server) injectURLConfig(body []byte, html bool) []byte {
 // the agent installing or reading the skill learns which URL format this server
 // actually uses. It is content, not a runbook note.
 func (s *Server) urlFormatSection() string {
+	// With a public URL the section states it; unset, it keeps stating the base
+	// host alone, which is what this section has always done.
+	scheme, authority := s.siteOrigin()
+	if s.PublicURL == "" {
+		authority = s.BaseHost
+	}
+	public := ""
+	if s.PublicURL != "" {
+		public = "This server is published at `" + scheme + "://" + authority + "`, so site addresses\n" +
+			"use that host rather than the address sharedd listens on.\n\n"
+	}
 	if s.URLMode == URLModePath {
 		return "\n## Where sites live on this server\n\n" +
+			public +
 			"**Path mode.** Every site shares one host and is addressed by its path:\n\n" +
-			"    http://" + s.BaseHost + s.PathPrefix + "/<site-name>/\n\n" +
+			"    " + scheme + "://" + authority + s.PathPrefix + "/<site-name>/\n\n" +
 			"There are no per-site subdomains here — the host only routes on the path, so a\n" +
 			"deploy of `mysite` is at `" + s.PathPrefix + "/mysite/`, and its `index.html` is at\n" +
 			"`" + s.PathPrefix + "/mysite/index.html`. `shared deploy` prints the exact URL; use it\n" +
@@ -142,7 +193,8 @@ func (s *Server) urlFormatSection() string {
 			"`/api/...` path of its own.\n"
 	}
 	return "\n## Where sites live on this server\n\n" +
-		"**Subdomain mode.** Every site is its own host: `http://<site-name>." + s.BaseHost + "/`.\n" +
+		public +
+		"**Subdomain mode.** Every site is its own host: `" + scheme + "://<site-name>." + authority + "/`.\n" +
 		"`shared deploy` prints the exact URL; use it rather than composing one. The SDK is\n" +
 		"loaded with `<script src=\"/shared.js\"></script>` and its `/api/...` calls are scoped\n" +
 		"to the current site by the host name.\n"
