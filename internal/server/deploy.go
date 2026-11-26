@@ -391,25 +391,30 @@ func extractTarball(r io.Reader, root string) error {
 	}
 }
 
+// siteOrigin is the scheme and host[:port] every stated site URL builds from.
+// A configured public URL wins, because behind a TLS proxy the listen address
+// stops describing how clients reach the server; otherwise it is http plus the
+// port sharedd listens on (omitted when that is 80).
+func (s *Server) siteOrigin() (scheme, authority string) {
+	if s.PublicURL != "" {
+		return s.publicScheme, s.publicAuthority
+	}
+	authority = s.BaseHost
+	if _, p, err := net.SplitHostPort(s.Addr); err == nil && p != "" && p != "80" {
+		authority = net.JoinHostPort(s.BaseHost, p)
+	}
+	return "http", authority
+}
+
 // siteURL is the live address of a site, in whichever scheme the server runs.
 // It is the only place that composes a site URL, so deploy, rollback, the sites
 // listing and the CLI all state the same thing.
 func (s *Server) siteURL(site string) string {
-	port := ""
-	if _, p, err := net.SplitHostPort(s.Addr); err == nil && p != "" && p != "80" {
-		port = p
-	}
-	host := s.BaseHost
-	if port != "" {
-		host = net.JoinHostPort(host, port)
-	}
+	scheme, authority := s.siteOrigin()
 	if s.URLMode == URLModePath {
-		return "http://" + host + s.PathPrefix + "/" + site + "/"
+		return scheme + "://" + authority + s.PathPrefix + "/" + site + "/"
 	}
-	if port != "" {
-		return "http://" + site + "." + s.BaseHost + ":" + port + "/"
-	}
-	return "http://" + site + "." + s.BaseHost + "/"
+	return scheme + "://" + site + "." + authority + "/"
 }
 
 func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
